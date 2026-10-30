@@ -5,10 +5,12 @@ members = [
     "crates/isle-daemon",
     "crates/isle-shelf",
     "crates/isle-whisper",
+    "crates/isle-parakeet",
 ]
-# isle-shelf needs the GTK 4 development files, and isle-whisper cmake, a C++
-# compiler, libclang and (for the GPU) the Vulkan headers and glslc, so they
-# are only built when asked for: `cargo build -p isle-shelf -p isle-whisper`.
+# isle-shelf needs the GTK 4 development files, and isle-whisper / isle-parakeet
+# cmake and a C++ compiler (plus, for the GPU, the Vulkan headers and glslc), so
+# they are only built when asked for: `cargo build -p isle-shelf -p isle-whisper
+# -p isle-parakeet`.
 default-members = ["crates/isle-core", "crates/isle-daemon"]
 
 [workspace.package]
@@ -51,8 +53,8 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
-# The service and the shelf are small and mostly wait: built for size. isle-whisper keeps
-# full speed for transcribing.
+# The service and the shelf are small and mostly wait: built for size. isle-whisper and
+# isle-parakeet keep full speed for transcribing.
 [profile.release.package.isle-daemon]
 opt-level = "s"
 
@@ -63,7 +65,7 @@ opt-level = "s"
 opt-level = "s"
 
 # Their libraries too (zbus, tokio, image, ureq...): less code for isled to hold in memory. Not
-# whisper's, which keep full speed.
+# whisper's or transcribe.cpp's, which keep full speed.
 [profile.release.package."*"]
 opt-level = "s"
 
@@ -71,4 +73,10 @@ opt-level = "s"
 opt-level = 3
 
 [profile.release.package.whisper-rs-sys]
+opt-level = 3
+
+[profile.release.package.transcribe-cpp]
+opt-level = 3
+
+[profile.release.package.transcribe-cpp-sys]
 opt-level = 3

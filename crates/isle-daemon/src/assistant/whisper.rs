@@ -20,6 +20,10 @@ use super::child::{self, Group};
 use crate::store::{data_dir, write_private};
 
 const NATIVE: &str = "isle-whisper";
+/// Parakeet's helper, for the `parakeet` model; whisper's runs every other.
+const PARAKEET: &str = "isle-parakeet";
+/// The model name Settings uses for Parakeet (see `isle_core::speech::PARAKEET`).
+const PARAKEET_MODEL: &str = "parakeet";
 /// Set, the user picked the GPUs (by their Vulkan numbers) the helper may use.
 const PINNED: &str = "GGML_VK_VISIBLE_DEVICES";
 /// How long `isled --doctor` waits for the helper to say where it runs.
@@ -32,13 +36,32 @@ static NO_GPU: AtomicBool = AtomicBool::new(false);
 
 /// `isle-whisper` beside isled (both go in ~/.local/bin), else on the PATH.
 fn native() -> Option<PathBuf> {
+    helper(NATIVE)
+}
+
+/// `isle-parakeet` beside isled, else on the PATH.
+fn parakeet() -> Option<PathBuf> {
+    helper(PARAKEET)
+}
+
+/// The helper that runs `model`: Parakeet's for it, whisper's for every whisper model.
+fn helper_for(model: &str) -> Option<PathBuf> {
+    if model == PARAKEET_MODEL {
+        parakeet()
+    } else {
+        native()
+    }
+}
+
+/// A speech helper beside isled (both go in ~/.local/bin), else on the PATH.
+fn helper(name: &str) -> Option<PathBuf> {
     let beside = std::env::current_exe()
         .ok()
-        .and_then(|exe| Some(exe.parent()?.join(NATIVE)));
+        .and_then(|exe| Some(exe.parent()?.join(name)));
     let path = std::env::var_os("PATH").unwrap_or_default();
     beside
         .into_iter()
-        .chain(std::env::split_paths(&path).map(|dir| dir.join(NATIVE)))
+        .chain(std::env::split_paths(&path).map(|dir| dir.join(name)))
         .find(|path| path.is_file())
 }
 
@@ -55,20 +78,26 @@ fn downloaded(dir: &Path) -> Vec<&'static str> {
         .collect()
 }
 
-/// Whether speech recognition is set up: `isle-whisper` and a model for it.
+/// Whether speech recognition is set up: a helper and a model for it.
 pub fn installed() -> bool {
-    native().is_some() && !downloaded(&models_dir()).is_empty()
+    (native().is_some() || parakeet().is_some()) && !downloaded(&models_dir()).is_empty()
 }
 
 /// What `isled --doctor` says about speech recognition.
 pub fn report() -> String {
     let models = downloaded(&models_dir());
-    match native() {
-        Some(native) if !models.is_empty() => format!(
+    // The helper that runs the first model downloaded (whisper's, else Parakeet's).
+    let helper = models
+        .first()
+        .and_then(|model| helper_for(model))
+        .or_else(native)
+        .or_else(parakeet);
+    match helper {
+        Some(helper) if !models.is_empty() => format!(
             "  Speech recognition: {} (models: {}), on {}",
-            native.display(),
+            helper.display(),
             models.join(", "),
-            probe(&native)
+            probe(&helper)
         ),
         Some(_) => "  Speech recognition: no speech model yet (run isle-setup-voice)".to_owned(),
         None => "  Speech recognition: isle-whisper is missing (install Isle again)".to_owned(),
@@ -159,7 +188,7 @@ impl Whisper {
     /// Starts the helper; it loads the model while the user is still speaking. Without the model it
     /// starts all the same, and answers that the model is not downloaded.
     pub fn start(model: &str, language: &str) -> anyhow::Result<Self> {
-        let helper = native().context("speech recognition is not set up")?;
+        let helper = helper_for(model).context("speech recognition is not set up")?;
         let cpu = GPU_FAILED.load(Ordering::Relaxed) || NO_GPU.load(Ordering::Relaxed);
         Self::start_with(helper, model, language, cpu)
     }

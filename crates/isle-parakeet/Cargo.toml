@@ -1,0 +1,24 @@
+[package]
+name = "isle-parakeet"
+description = "Speech recognition for Isle's voice assistant: Parakeet on the GPU through Vulkan, or on the processor"
+version.workspace = true
+edition.workspace = true
+# transcribe.cpp and its bindings build with cmake and a C++ compiler.
+rust-version = "1.88"
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# Vulkan is opt-in: building it needs the Vulkan headers and glslc. Turn it on with
+# `cargo build -p isle-parakeet --features vulkan`. Without it, Parakeet runs on the processor.
+default = []
+vulkan = ["transcribe-cpp/vulkan"]
+
+[dependencies]
+isle-core.workspace = true
+
+serde_json.workspace = true
+# Pinned: it brings transcribe.cpp and ggml, built from source with cmake.
+# default-features off: the crate defaults to Metal (macOS); Linux builds CPU or Vulkan.
+transcribe-cpp = { version = "=0.4.1", default-features = false }

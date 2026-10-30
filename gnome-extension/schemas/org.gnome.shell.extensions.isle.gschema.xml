@@ -252,7 +252,7 @@
     <key name="voice-speech-model" type="s">
       <default>'small'</default>
       <summary>Speech recognition model</summary>
-      <description>A whisper.cpp model: tiny, base, small or medium. Bigger is more accurate and slower; isle-setup-voice downloads it.</description>
+      <description>A speech model: whisper.cpp's tiny, base, small or medium, or Parakeet (English only). Bigger is more accurate and slower; isle-setup-voice downloads it.</description>
     </key>
     <key name="voice-language" type="s">
       <default>''</default>

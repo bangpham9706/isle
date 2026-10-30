@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 zickrian
-# Sets up speech recognition for Isle's voice assistant: downloads the whisper.cpp model, checking its SHA-256.
-# Usage: isle-setup-voice [tiny|base|small|medium] [--remove-old]
+# Sets up speech recognition for Isle's voice assistant: downloads the speech model, checking its SHA-256.
+# Usage: isle-setup-voice [tiny|base|small|medium|parakeet] [--remove-old]
 #   The model given (then also chosen in Settings → Assistant), else the one chosen there, else small.
 #   --remove-old  also deletes what the older Python setup left: its venv and faster-whisper models.
 set -euo pipefail
@@ -11,6 +11,7 @@ DATA="${XDG_DATA_HOME:-$HOME/.local/share}/isle"
 MODELS="$DATA/models"
 SCHEMAS="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/isle@zickrian.github.io/schemas"
 WHISPER_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+PARAKEET_URL="https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf/resolve/main"
 VAD_URL="https://huggingface.co/ggml-org/whisper-vad/resolve/main"
 # What an older Isle's faster-whisper setup left.
 OLD_VENV="$DATA/voice-venv"
@@ -27,10 +28,10 @@ GIVEN=0
 REMOVE_OLD=0
 for arg in "$@"; do
     case "$arg" in
-        tiny | base | small | medium) MODEL="$arg" GIVEN=1 ;;
+        tiny | base | small | medium | parakeet) MODEL="$arg" GIVEN=1 ;;
         --remove-old) REMOVE_OLD=1 ;;
         -h | --help) sed -n '4,7s/^# \{0,1\}//p' "$0"; exit 0 ;;
-        *) fail "unknown argument '$arg' (a model is tiny, base, small or medium)" ;;
+        *) fail "unknown argument '$arg' (a model is tiny, base, small, medium or parakeet)" ;;
     esac
 done
 if [ -z "$MODEL" ]; then
@@ -46,6 +47,7 @@ case "$MODEL" in
     base) set -- ggml-base-q8_0.bin c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9 81768585 ;;
     small) set -- ggml-small-q8_0.bin 49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f 264464607 ;;
     medium) set -- ggml-medium-q8_0.bin 42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502 823369779 ;;
+    parakeet) set -- parakeet-unified-en-0.6b-Q8_0.gguf "" 731357568 ;;
     *) fail "Settings name an unknown model '$MODEL'; give one: isle-setup-voice small" ;;
 esac
 FILE="$1" SHA="$2" SIZE="$3"
@@ -78,9 +80,28 @@ fetch() {
 }
 
 mkdir -p "$MODELS"
-step "Downloading the '$MODEL' speech model ($((SIZE / 1000000)) MB) to $MODELS"
-fetch "$WHISPER_URL/$FILE" "$FILE" "$SHA"
-fetch "$VAD_URL/$VAD_FILE" "$VAD_FILE" "$VAD_SHA"
+if [ "$MODEL" = parakeet ]; then
+    # Handy already downloaded this to the Hugging Face cache: link it rather than download again.
+    step "Setting up the 'parakeet' speech model in $MODELS"
+    CACHE="$HUB/models--handy-computer--parakeet-unified-en-0.6b-gguf/snapshots"
+    SOURCE="$(find "$CACHE" -maxdepth 2 -name "$FILE" 2>/dev/null | head -n 1 || true)"
+    if [ -f "$MODELS/$FILE" ]; then
+        echo "Already there: $MODELS/$FILE"
+    elif [ -n "$SOURCE" ]; then
+        ln -sf "$SOURCE" "$MODELS/$FILE"
+        echo "Linked to Handy's copy: $SOURCE"
+    else
+        step "Downloading the 'parakeet' speech model ($((SIZE / 1000000)) MB) to $MODELS"
+        curl -fL --retry 3 --progress-bar -C - -o "$MODELS/$FILE.part" "$PARAKEET_URL/$FILE" ||
+            curl -fL --retry 3 --progress-bar -o "$MODELS/$FILE.part" "$PARAKEET_URL/$FILE" ||
+            fail "could not download $PARAKEET_URL/$FILE; check the internet connection and try again."
+        mv -f "$MODELS/$FILE.part" "$MODELS/$FILE"
+    fi
+else
+    step "Downloading the '$MODEL' speech model ($((SIZE / 1000000)) MB) to $MODELS"
+    fetch "$WHISPER_URL/$FILE" "$FILE" "$SHA"
+    fetch "$VAD_URL/$VAD_FILE" "$VAD_FILE" "$VAD_SHA"
+fi
 # isled runs the model chosen in Settings, so a model named here becomes that choice.
 if [ "$GIVEN" = 1 ]; then
     if { gsettings --schemadir "$SCHEMAS" set org.gnome.shell.extensions.isle voice-speech-model "$MODEL" ||
@@ -91,18 +112,20 @@ if [ "$GIVEN" = 1 ]; then
     fi
 fi
 
-# isle-whisper beside this script (both in ~/.local/bin), on the PATH, or built in the source folder.
+# isle-whisper (or isle-parakeet) beside this script (both in ~/.local/bin), on the PATH, or built in the source folder.
 HERE="$(dirname "$(readlink -f "$0")")"
 WHISPER=""
-for candidate in "$HERE/isle-whisper" "$(command -v isle-whisper || true)" "$HERE/../target/release/isle-whisper"; do
+for candidate in \
+    "$HERE/isle-whisper" "$(command -v isle-whisper || true)" "$HERE/../target/release/isle-whisper" \
+    "$HERE/isle-parakeet" "$(command -v isle-parakeet || true)" "$HERE/../target/release/isle-parakeet"; do
     if [ -n "$candidate" ] && [ -x "$candidate" ]; then
         WHISPER="$candidate"
         break
     fi
 done
 if [ -z "$WHISPER" ]; then
-    echo "isle-whisper, which runs the model, is not installed: install Isle again" \
-        "(from source it needs cmake and a C++ compiler; see the README)."
+    echo "isle-whisper or isle-parakeet, which runs the model, is not installed: install Isle again" \
+        "(from source they need cmake and a C++ compiler; see the README)."
 fi
 
 # The older setup, which isle-whisper replaces: only offered once isle-whisper is there to take over.
