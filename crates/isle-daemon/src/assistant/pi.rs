@@ -51,7 +51,8 @@ impl Pi {
         // flat beside their `type` (never nested under it), and the schema itself.
         let instructions = format!(
             "{instructions}\n\
-             Reply with exactly one JSON object and nothing around it, like this:\n\
+             Reply with exactly one JSON object and nothing around it — no words before or after it, \
+             no code fence, and it only once: like this:\n\
              {{\"say\": \"...\", \"actions\": [], \"listen\": false, \"done\": true}}\n\
              Each action is an object with its \"type\" and its fields at the same level, never nested \
              under a key of its own: {{\"type\": \"open_url\", \"url\": \"https://youtube.com\"}}, \

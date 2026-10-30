@@ -69,7 +69,8 @@ fn yes() -> bool {
     true
 }
 
-/// The answer in `text`: its JSON, also inside a ```json fence, else the text as said, without actions.
+/// The answer in `text`: its JSON, also inside a ```json fence or among words, else the text as said,
+/// without actions.
 pub fn from_text(text: &str) -> Answer {
     let text = text.trim();
     let inner = text
@@ -77,9 +78,33 @@ pub fn from_text(text: &str) -> Answer {
         .or_else(|| text.strip_prefix("```"))
         .and_then(|rest| rest.trim_end().strip_suffix("```"))
         .map_or(text, str::trim);
-    let mut answer: Answer = serde_json::from_str(inner).unwrap_or_else(|_| Answer::plain(text));
+    let parsed = serde_json::from_str::<Answer>(inner)
+        .ok()
+        .or_else(|| embedded(inner));
+    let mut answer = parsed.unwrap_or_else(|| Answer::plain(text));
     answer.actions.iter_mut().for_each(window_focus);
     answer
+}
+
+/// The last JSON object in `inner` that looks like an answer: models sometimes write words around it,
+/// or repeat it. Only an object with a `say` or `actions` counts, so prose with braces is left alone.
+fn embedded(inner: &str) -> Option<Answer> {
+    let mut found = None;
+    for (at, _) in inner.match_indices('{') {
+        let Ok(value) = serde_json::Deserializer::from_str(&inner[at..])
+            .into_iter::<Value>()
+            .next()?
+        else {
+            continue;
+        };
+        if value.get("say").is_none() && value.get("actions").is_none() {
+            continue;
+        }
+        if let Ok(answer) = serde_json::from_value::<Answer>(value) {
+            found = Some(answer);
+        }
+    }
+    found
 }
 
 /// A `focus` naming an app or window means switching to it, not the focus timer (Codex mixes the two up).
@@ -193,5 +218,19 @@ mod tests {
         let plain = from_text("  Sure, it is 3 pm.  ");
         assert_eq!(plain.say, "Sure, it is 3 pm.");
         assert!(plain.actions.is_empty() && plain.done);
+    }
+
+    #[test]
+    fn reads_an_answer_written_among_words() {
+        // What Pi wrote once: the envelope, a sentence, and the envelope again.
+        let json = r#"{"say":"Opening Brave now.","actions":[{"type":"open_app","app":"Brave Origin"}],"listen":false,"done":true}"#;
+        let answer = from_text(&format!("{json}\nI’m going to open Brave.\n{json}"));
+        assert_eq!(answer.say, "Opening Brave now.");
+        assert_eq!(answer.actions.len(), 1);
+        assert_eq!(answer.actions[0]["app"], "Brave Origin");
+        // Braces in prose are not mistaken for an answer.
+        let prose = from_text("The set {a, b} is fine, and {c} too.");
+        assert_eq!(prose.say, "The set {a, b} is fine, and {c} too.");
+        assert!(prose.actions.is_empty());
     }
 }
