@@ -6,7 +6,9 @@
 
 use std::path::Path;
 
-use transcribe_cpp::{Backend, Model as Context, ModelOptions, RunOptions, Session, SessionOptions};
+use transcribe_cpp::{
+    Backend, Model as Context, ModelOptions, RunOptions, Session, SessionOptions,
+};
 
 const SAMPLE_RATE: usize = 16_000;
 /// A very short "yes" is padded, so the model is never handed an empty utterance.

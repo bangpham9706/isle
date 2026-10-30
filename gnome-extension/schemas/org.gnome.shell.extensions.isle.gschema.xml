@@ -250,9 +250,9 @@
       <description>A model id from “agy models”; empty for agy's default.</description>
     </key>
     <key name="voice-speech-model" type="s">
-      <default>'small'</default>
+      <default>'parakeet'</default>
       <summary>Speech recognition model</summary>
-      <description>A speech model: whisper.cpp's tiny, base, small or medium, or Parakeet (English only). Bigger is more accurate and slower; isle-setup-voice downloads it.</description>
+      <description>A speech model: Parakeet (English only, the default), or whisper.cpp's tiny, base, small or medium, kept for other languages and for compatibility. Bigger is more accurate and slower; isle-setup-voice downloads it.</description>
     </key>
     <key name="voice-language" type="s">
       <default>''</default>

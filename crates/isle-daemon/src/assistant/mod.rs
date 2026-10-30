@@ -1349,7 +1349,7 @@ async fn turn(
     let text = match typed {
         Some(text) => text,
         None => {
-            let model = or(&session.context.whisper_model, "small").to_owned();
+            let model = or(&session.context.whisper_model, isle_core::speech::PARAKEET).to_owned();
             if !whisper::installed() {
                 return fail(iface, set_up(NOT_SET_UP, &model)).await;
             }

@@ -235,12 +235,12 @@ export default class IslePreferences extends ExtensionPreferences {
         syncModel();
 
         const options = [provider, model];
-        options.push(choiceRow(settings, 'voice-speech-model', 'Speech recognition', 'Bigger is more accurate, and slower; downloaded once (Parakeet is English only)', [
+        options.push(choiceRow(settings, 'voice-speech-model', 'Speech recognition', 'Parakeet is the default; the others cover other languages. Bigger is more accurate, and slower; downloaded once', [
+            ['parakeet', 'Parakeet 0.6B (English, ~700 MB)'],
             ['tiny', 'Tiny (44 MB)'],
             ['base', 'Base (82 MB)'],
             ['small', 'Small (265 MB)'],
             ['medium', 'Medium (823 MB)'],
-            ['parakeet', 'Parakeet 0.6B (English, ~700 MB)'],
         ]));
         options.push(choiceRow(settings, 'voice-language', 'Language', 'The language you speak', [
             ['', 'Any (detected)'],

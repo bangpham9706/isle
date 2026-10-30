@@ -44,7 +44,7 @@ if [ "$SYSTEM" = 0 ]; then
 fi
 # The AI alerts' hooks in Claude Code's and Codex's own settings would run an isled that is gone.
 [ -x "$HOME/.local/bin/isled" ] && "$HOME/.local/bin/isled" --unhook-all 2>/dev/null
-rm -f "$HOME/.local/bin/isled" "$HOME/.local/bin/isle-shelf" "$HOME/.local/bin/isle-whisper" "$HOME/.local/bin/isle-charge-limit" \
+rm -f "$HOME/.local/bin/isled" "$HOME/.local/bin/isle-shelf" "$HOME/.local/bin/isle-parakeet" "$HOME/.local/bin/isle-whisper" "$HOME/.local/bin/isle-charge-limit" \
       "$HOME/.local/bin/isle-setup-voice" "$HOME/.local/bin/isle-uninstall" \
       "$DATA/dbus-1/services/io.github.zickrian.isle.Daemon.service" \
       "$DATA/dbus-1/services/io.github.zickrian.isle.ShelfWindow.service" \

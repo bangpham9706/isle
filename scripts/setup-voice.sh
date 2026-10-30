@@ -3,7 +3,7 @@
 # Copyright (C) 2026 zickrian
 # Sets up speech recognition for Isle's voice assistant: downloads the speech model, checking its SHA-256.
 # Usage: isle-setup-voice [tiny|base|small|medium|parakeet] [--remove-old]
-#   The model given (then also chosen in Settings → Assistant), else the one chosen there, else small.
+#   The model given (then also chosen in Settings → Assistant), else the one chosen there, else parakeet.
 #   --remove-old  also deletes what the older Python setup left: its venv and faster-whisper models.
 set -euo pipefail
 
@@ -39,7 +39,7 @@ if [ -z "$MODEL" ]; then
     MODEL="$({ gsettings --schemadir "$SCHEMAS" get org.gnome.shell.extensions.isle voice-speech-model ||
         gsettings get org.gnome.shell.extensions.isle voice-speech-model; } 2>/dev/null | tr -d "'" || true)"
 fi
-MODEL="${MODEL:-small}"
+MODEL="${MODEL:-parakeet}"
 
 # The official whisper.cpp files (8-bit), as isle-whisper names them: file, SHA-256, size.
 case "$MODEL" in
@@ -112,12 +112,12 @@ if [ "$GIVEN" = 1 ]; then
     fi
 fi
 
-# isle-whisper (or isle-parakeet) beside this script (both in ~/.local/bin), on the PATH, or built in the source folder.
+# isle-parakeet (or isle-whisper) beside this script (both in ~/.local/bin), on the PATH, or built in the source folder.
 HERE="$(dirname "$(readlink -f "$0")")"
 WHISPER=""
 for candidate in \
-    "$HERE/isle-whisper" "$(command -v isle-whisper || true)" "$HERE/../target/release/isle-whisper" \
-    "$HERE/isle-parakeet" "$(command -v isle-parakeet || true)" "$HERE/../target/release/isle-parakeet"; do
+    "$HERE/isle-parakeet" "$(command -v isle-parakeet || true)" "$HERE/../target/release/isle-parakeet" \
+    "$HERE/isle-whisper" "$(command -v isle-whisper || true)" "$HERE/../target/release/isle-whisper"; do
     if [ -n "$candidate" ] && [ -x "$candidate" ]; then
         WHISPER="$candidate"
         break
@@ -128,7 +128,7 @@ if [ -z "$WHISPER" ]; then
         "(from source they need cmake and a C++ compiler; see the README)."
 fi
 
-# The older setup, which isle-whisper replaces: only offered once isle-whisper is there to take over.
+# The older setup, which isle-parakeet and isle-whisper replace: only offered once a helper is there to take over.
 OLD=()
 [ -d "$OLD_VENV" ] && OLD+=("$OLD_VENV")
 [ -f "$OLD_HELPER" ] && OLD+=("$OLD_HELPER")

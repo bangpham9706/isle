@@ -47,12 +47,14 @@ install_service() {
 }
 
 SHELF=0
+PARAKEET=0
 WHISPER=0
 # -f, not -x: unpacked where files cannot run (a /tmp mounted noexec), they still install.
 if [ -f bin/isled ]; then
     # A release package: the programs come built.
     BUILT=bin
     [ -f bin/isle-shelf ] && SHELF=1
+    [ -f bin/isle-parakeet ] && PARAKEET=1
     [ -f bin/isle-whisper ] && WHISPER=1
 else
     BUILT=target/release
@@ -70,23 +72,32 @@ else
         echo "GTK 4 development files not found: skipping isle-shelf (drag and drop on the shelf)."
         echo "Install them with 'sudo apt install libgtk-4-dev' and run this script again."
     fi
-    # The voice assistant's speech recognition: whisper.cpp, built with cmake; Vulkan for the GPU.
+    # The voice assistant's speech recognition: Parakeet (transcribe.cpp) and whisper.cpp, both
+    # built with cmake; Vulkan for the GPU.
     if command -v cmake >/dev/null && command -v c++ >/dev/null; then
-        step "Building isle-whisper"
         if command -v glslc >/dev/null && pkg-config --exists vulkan; then
-            FEATURES=()
+            GPU_FEATURES=()
+            PARAKEET_FEATURES=(--features vulkan)
         else
             echo "Vulkan headers or glslc not found: speech recognition will use the processor only."
             echo "For the GPU: 'sudo apt install libvulkan-dev glslc', then run this script again."
-            FEATURES=(--no-default-features)
+            GPU_FEATURES=(--no-default-features)
+            PARAKEET_FEATURES=()
         fi
-        if cargo build --release -p isle-whisper "${FEATURES[@]}"; then
+        step "Building isle-parakeet"
+        if cargo build --release -p isle-parakeet "${PARAKEET_FEATURES[@]}"; then
+            PARAKEET=1
+        else
+            echo "isle-parakeet did not build (it needs libclang too: 'sudo apt install libclang-dev'); the voice assistant needs it."
+        fi
+        step "Building isle-whisper"
+        if cargo build --release -p isle-whisper "${GPU_FEATURES[@]}"; then
             WHISPER=1
         else
-            echo "isle-whisper did not build (it needs libclang too: 'sudo apt install libclang-dev'); the voice assistant needs it."
+            echo "isle-whisper did not build (it needs libclang too: 'sudo apt install libclang-dev'); it covers other languages."
         fi
     else
-        echo "cmake or a C++ compiler not found: skipping isle-whisper (the voice assistant's speech recognition)."
+        echo "cmake or a C++ compiler not found: skipping isle-parakeet and isle-whisper (the voice assistant's speech recognition)."
         echo "Install them with 'sudo apt install cmake g++ libclang-dev' and run this script again."
     fi
 fi
@@ -97,6 +108,9 @@ if [ "$SHELF" = 1 ]; then
     put "$BUILT/isle-shelf" "$BINDIR/isle-shelf"
     # A running helper is the old version; it starts again, updated, when needed.
     pkill -x isle-shelf 2>/dev/null || true
+fi
+if [ "$PARAKEET" = 1 ]; then
+    put "$BUILT/isle-parakeet" "$BINDIR/isle-parakeet"
 fi
 if [ "$WHISPER" = 1 ]; then
     put "$BUILT/isle-whisper" "$BINDIR/isle-whisper"
@@ -164,9 +178,10 @@ else
     pkill -u "$(id -u)" -x isled 2>/dev/null || true
 fi
 
-# The voice assistant set up with an older Isle used Python (up to 3 GB): moved to isle-whisper,
-# with the model chosen then, and the old setup deleted. Offline, it stays for isle-setup-voice.
-if [ "$WHISPER" = 1 ] && { [ -d "$DATA/isle/voice-venv" ] || [ -f "$DATA/isle/isle-whisper.py" ]; }; then
+# The voice assistant set up with an older Isle used Python (up to 3 GB): moved to isle-parakeet
+# or isle-whisper, with the model chosen then, and the old setup deleted. Offline, it stays for
+# isle-setup-voice.
+if { [ "$PARAKEET" = 1 ] || [ "$WHISPER" = 1 ]; } && { [ -d "$DATA/isle/voice-venv" ] || [ -f "$DATA/isle/isle-whisper.py" ]; }; then
     step "Moving the voice assistant to the new speech recognition"
     "$BINDIR/isle-setup-voice" --remove-old </dev/null ||
         echo "That did not finish; run isle-setup-voice later (the voice assistant needs it)."

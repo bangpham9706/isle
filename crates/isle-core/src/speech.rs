@@ -5,8 +5,9 @@
 //! `isle-setup-voice` downloads to [`MODELS_DIR`] in the user's data folder and the helpers
 //! (`isle-whisper`, `isle-parakeet`) read.
 
-/// The model sizes offered, smallest first, then Parakeet (a different engine, English only).
-pub const MODELS: [&str; 5] = ["tiny", "base", "small", "medium", PARAKEET];
+/// The model sizes offered: Parakeet first (the default, a different engine, English only), then
+/// whisper.cpp's, smallest first.
+pub const MODELS: [&str; 5] = [PARAKEET, "tiny", "base", "small", "medium"];
 
 /// Parakeet's model name in Settings; `isle-parakeet` runs it, `isle-whisper` every other.
 pub const PARAKEET: &str = "parakeet";

@@ -35,8 +35,8 @@ service() {
 # Everything but the license, under $1, with Inter in $2 (each system has its own fonts folder).
 stage() {
     local root="$1" fonts="$1$2"
-    install -Dm755 -t "$root/usr/bin" "$SRC/bin/isled" "$SRC/bin/isle-shelf" "$SRC/bin/isle-whisper" \
-        "$SRC/scripts/isle-charge-limit"
+    install -Dm755 -t "$root/usr/bin" "$SRC/bin/isled" "$SRC/bin/isle-shelf" "$SRC/bin/isle-parakeet" \
+        "$SRC/bin/isle-whisper" "$SRC/scripts/isle-charge-limit"
     install -Dm755 "$SRC/scripts/setup-voice.sh" "$root/usr/bin/isle-setup-voice"
 
     local ext="$root/usr/share/gnome-shell/extensions/$UUID"
@@ -77,7 +77,7 @@ EOF
     # The libraries the programs link, as package names and versions (libc6, libgtk-4-1, …).
     mkdir -p "$WORK/shlibs/debian"
     printf 'Source: isle\n\nPackage: isle\nArchitecture: amd64\n' > "$WORK/shlibs/debian/control"
-    depends="$(cd "$WORK/shlibs" && dpkg-shlibdeps -O --warnings=0 "$root/usr/bin/isled" "$root/usr/bin/isle-shelf" "$root/usr/bin/isle-whisper" |
+    depends="$(cd "$WORK/shlibs" && dpkg-shlibdeps -O --warnings=0 "$root/usr/bin/isled" "$root/usr/bin/isle-shelf" "$root/usr/bin/isle-parakeet" "$root/usr/bin/isle-whisper" |
         sed -n 's/^shlibs:Depends=//p')"
 
     mkdir -p "$root/DEBIAN"
@@ -139,6 +139,7 @@ cp -a "$stage/." "%{buildroot}/"
 %doc /usr/share/doc/isle
 /usr/bin/isled
 /usr/bin/isle-shelf
+/usr/bin/isle-parakeet
 /usr/bin/isle-whisper
 /usr/bin/isle-setup-voice
 /usr/bin/isle-charge-limit

@@ -61,9 +61,10 @@ Super+I:
 1. Install and sign in to one of Claude Code, Codex, Grok or Antigravity (the
    [README](../README.md#voice-assistant) says how; each uses your own plan).
 2. Set up speech recognition once, in a terminal. It downloads the speech
-   model picked in Settings → Assistant (`small`, 265 MB, by default; or name
-   one, which Settings then uses: `isle-setup-voice base`) and needs nothing
-   else installed. A graphics
+   model picked in Settings → Assistant (`parakeet`, 731 MB, by default; or name
+   one, which Settings then uses: `isle-setup-voice small`) and needs nothing
+   else installed. Parakeet is English only; whisper.cpp's models cover other
+   languages. A graphics
    card is used through Vulkan when there is one, else the processor:
 
    ```sh
@@ -232,7 +233,7 @@ Everything goes in your home folder:
 | Where | What |
 |---|---|
 | `~/.local/share/gnome-shell/extensions/isle@zickrian.github.io` | The GNOME Shell extension |
-| `~/.local/bin` | `isled` (the background service), `isle-shelf` (drag and drop), `isle-whisper` (speech recognition), `isle-uninstall`, `isle-setup-voice`, `isle-charge-limit` |
+| `~/.local/bin` | `isled` (the background service), `isle-shelf` (drag and drop), `isle-parakeet` and `isle-whisper` (speech recognition), `isle-uninstall`, `isle-setup-voice`, `isle-charge-limit` |
 | `~/.config/systemd/user`, `~/.local/share/dbus-1/services` | Starting `isled` with your session |
 | `~/.local/share/fonts/isle` | Inter, the island's typeface |
 | `~/.local/share/isle` | Your data, and the speech models `isle-setup-voice` downloads (`models`) |

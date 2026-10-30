@@ -238,7 +238,7 @@ cd isle-*-x86_64-linux
 **From source**, for development or other architectures. You need Rust 1.92
 or newer (1.88 without the shelf helper) ([rustup](https://rustup.rs); Ubuntu 24.04's own `cargo` is too
 old), for the shelf's drag and drop the GTK 4 development files, and for the
-voice assistant's speech recognition (whisper.cpp) cmake, libclang, and for
+voice assistant's speech recognition (whisper.cpp and transcribe.cpp) cmake, libclang, and for
 the GPU the Vulkan headers and glslc:
 
 ```sh
@@ -384,10 +384,12 @@ after 10 minutes, and a command is stopped after 30.
 2. Set up speech recognition, once: press **Set up** when the assistant asks
    for it, or run `~/.local/bin/isle-setup-voice` in a terminal (`isle-setup-voice` with a .deb,
    .rpm or AUR package; from the source folder: `scripts/setup-voice.sh`). It downloads the speech
-   model chosen in Settings, `small` by default (265 MB; `tiny` 44 MB, `base`
-   82 MB, `medium` 823 MB; `isle-setup-voice base` names one and picks it in
-   Settings), which `isle-whisper` runs with
-   [whisper.cpp](https://github.com/ggml-org/whisper.cpp): nothing else to
+   model chosen in Settings, Parakeet by default (731 MB, English only; the
+   whisper.cpp models cover other languages: `tiny` 44 MB, `base` 82 MB,
+   `small` 265 MB, `medium` 823 MB; `isle-setup-voice small` names one and picks
+   it in Settings), which `isle-parakeet` runs with
+   [transcribe.cpp](https://github.com/ggml-org/transcribe.cpp), or `isle-whisper`
+   with [whisper.cpp](https://github.com/ggml-org/whisper.cpp): nothing else to
    install. On a computer with a graphics card (NVIDIA, AMD or Intel Arc,
    through Vulkan) it runs there, in about a second; otherwise on the
    processor, in several seconds (it needs AVX2: Intel since 2013, AMD since
@@ -506,7 +508,7 @@ GNOME 46 (version 1.0.0):
 | On disk | Size |
 |---|---|
 | Programs (`isled` 6.8 MB, `isle-shelf` 0.7 MB) | 7.5 MB |
-| Speech recognition (`isle-whisper` 29 MB, most of it GPU code; the `small` model 265 MB), only once set up | 294 MB |
+| Speech recognition (`isle-parakeet` 4 MB and `isle-whisper` 29 MB, most of the latter GPU code; the default `parakeet` model 731 MB), only once set up | 764 MB |
 | Extension | 0.8 MB |
 | Inter typeface | 0.9 MB |
 | Cache (`~/.cache/isle`) | about 100 KB per song's cover and 6 KB per lyrics |
@@ -612,7 +614,8 @@ else lives in Rust behind a D-Bus API.
 | `crates/isle-core` | Platform-independent logic: LRC parsing, track-title clean-up, Pomodoro, tasks, calendar, shelf, clipboard history. Unit tested. |
 | `crates/isle-daemon` | `isled`, the D-Bus service; `src/assistant` is the voice assistant (speech, the three AIs, the agent loop, its tools), `src/usage.rs` the AI usage, `src/agents` the AI agents' hooks, `src/meeting.rs` meeting links, `src/updates.rs` the look for new versions, and `src/caller.rs` who may call what. |
 | `crates/isle-shelf` | `isle-shelf`, the files tray's drag-and-drop window. |
-| `crates/isle-whisper` | `isle-whisper`, the voice assistant's speech recognition: whisper.cpp, on the GPU through Vulkan or on the processor. |
+| `crates/isle-parakeet` | `isle-parakeet`, the voice assistant's default speech recognition: transcribe.cpp (Parakeet, English only), on the GPU through Vulkan or on the processor. |
+| `crates/isle-whisper` | `isle-whisper`, the voice assistant's other speech recognition: whisper.cpp (other languages), on the GPU through Vulkan or on the processor. |
 | `gnome-extension` | The GNOME Shell extension; `src/actionRules.js` holds the assistant's rules that need no GNOME, so they are tested anywhere. |
 | `tests/extension` | Tests of the extension's GNOME-free parts (`node --test`, and `gjs -m` for those that use GLib). |
 | `data` | systemd and D-Bus activation files, and the Inter typeface. |

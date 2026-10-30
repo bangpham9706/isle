@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 zickrian
 
-//! Speech to text: `isle-whisper` (whisper.cpp, on the GPU through Vulkan or on the processor).
+//! Speech to text: `isle-parakeet` (transcribe.cpp, the default) or `isle-whisper` (whisper.cpp,
+//! kept for other languages and compatibility), on the GPU through Vulkan or on the processor.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -86,7 +87,7 @@ pub fn installed() -> bool {
 /// What `isled --doctor` says about speech recognition.
 pub fn report() -> String {
     let models = downloaded(&models_dir());
-    // The helper that runs the first model downloaded (whisper's, else Parakeet's).
+    // The helper that runs the first model downloaded (Parakeet's, else whisper's).
     let helper = models
         .first()
         .and_then(|model| helper_for(model))
@@ -100,7 +101,9 @@ pub fn report() -> String {
             probe(&helper)
         ),
         Some(_) => "  Speech recognition: no speech model yet (run isle-setup-voice)".to_owned(),
-        None => "  Speech recognition: isle-whisper is missing (install Isle again)".to_owned(),
+        None => {
+            "  Speech recognition: no speech helper is installed (install Isle again)".to_owned()
+        }
     }
 }
 
