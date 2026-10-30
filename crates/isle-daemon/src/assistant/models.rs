@@ -376,6 +376,8 @@ async fn read(provider: Provider) -> Found {
         return Found::Gone;
     };
     let read = match provider {
+        // No picker for Pi: nothing to read onto.
+        Provider::Pi => return Found::Gone,
         Provider::Claude => tokio::task::spawn_blocking(read_claude)
             .await
             .map_err(anyhow::Error::from),

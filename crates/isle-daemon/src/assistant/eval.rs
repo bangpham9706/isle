@@ -102,6 +102,7 @@ fn eval_provider() -> Provider {
         Ok("claude") => Provider::Claude,
         Ok("codex") => Provider::Codex,
         Ok("grok") => Provider::Grok,
+        Ok("pi") => Provider::Pi,
         _ => Provider::Agy,
     }
 }

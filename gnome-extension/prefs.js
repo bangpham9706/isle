@@ -191,8 +191,16 @@ export default class IslePreferences extends ExtensionPreferences {
             model.visible = Boolean(current);
             if (!current)
                 return;
-            modelKey = current.modelKey;
+            modelKey = current.modelKey || null;
             const entry = catalog.of(current.id);
+            // With no model key the AI comes with no picker: its own default stands.
+            if (!modelKey) {
+                modelChoices = [['', `${current.name}'s default`]];
+                model.subtitle = current.about[0].toUpperCase() + current.about.slice(1);
+                model.model = Gtk.StringList.new(['Default']);
+                model.selected = 0;
+                return;
+            }
             const value = settings.get_string(modelKey);
             // Only what the plan allows; until isled has asked, just the AI's own default.
             const def = entry?.default_name ? `Default (${entry.default_name})` : `${current.name}’s default`;
@@ -959,6 +967,8 @@ const AI_PROVIDERS = [
         about: 'what Grok answers with, quickly'},
     {id: 'agy', name: 'Antigravity', planName: 'Antigravity', command: 'agy', modelKey: 'voice-agy-model',
         about: 'what Antigravity answers with'},
+    {id: 'pi', name: 'Pi', planName: 'Pi', command: 'pi',
+        about: 'what Pi answers with, with its own default model'},
 ];
 
 /** isled's `Models`: per AI `{plan, default, default_name, models: [{id, name}]}`, followed while Settings is open. */

@@ -14,6 +14,7 @@ mod chat;
 mod check;
 mod child;
 mod claude;
+mod pi;
 mod codex;
 #[cfg(test)]
 mod eval;
@@ -561,12 +562,18 @@ impl Session {
     /// The model picked in Settings for `provider` (or its default), unless its plan lacks it or it
     /// refused it: then the default, and the pick it stands in for. The pick is never changed.
     fn choice(&self, provider: Provider) -> (String, Option<String>) {
+        // Pi answers with its own default model: nothing is picked for it, nothing to refuse.
+        if provider == Provider::Pi {
+            return (String::new(), None);
+        }
         let context = &self.context;
         let picked = match provider {
             Provider::Agy => &context.agy_model,
             Provider::Claude => &context.claude_model,
             Provider::Codex => &context.codex_model,
             Provider::Grok => &context.grok_model,
+            // Unreachable: Pi is answered before this, with no pick at all.
+            Provider::Pi => unreachable!("Pi has no model pick"),
         };
         let catalog = self
             .catalogs
@@ -583,6 +590,8 @@ impl Session {
             Provider::Codex => codex::user_model().unwrap_or_default(),
             Provider::Grok => grok::user_model().unwrap_or_default(),
             Provider::Agy => String::new(),
+            // Unreachable, as above.
+            Provider::Pi => unreachable!("Pi has no model pick"),
         };
         let usable = |model: &str| {
             let signature = catalog.map(models::Catalog::signature).unwrap_or_default();

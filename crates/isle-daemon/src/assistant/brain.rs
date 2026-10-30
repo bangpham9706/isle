@@ -13,6 +13,7 @@ use super::answer::Answer;
 use super::claude::Claude;
 use super::codex::Codex;
 use super::grok::Grok;
+use super::pi::Pi;
 
 /// An AI CLI the assistant can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,14 +22,16 @@ pub enum Provider {
     Claude,
     Codex,
     Grok,
+    Pi,
 }
 
 /// Tried in this order when the user picked "auto", signed-in ones first. agy comes last: its terms bar
 /// third-party tools, so it answers only when it is all there is, or picked.
-const AUTO: [Provider; 4] = [
+const ALL: [Provider; 5] = [
     Provider::Claude,
     Provider::Codex,
     Provider::Grok,
+    Provider::Pi,
     Provider::Agy,
 ];
 
@@ -40,6 +43,7 @@ impl Provider {
             Provider::Claude => "claude",
             Provider::Codex => "codex",
             Provider::Grok => "grok",
+            Provider::Pi => "pi",
         }
     }
 
@@ -50,6 +54,7 @@ impl Provider {
             Provider::Claude => "Claude Code",
             Provider::Codex => "Codex",
             Provider::Grok => "Grok",
+            Provider::Pi => "Pi",
         }
     }
 
@@ -60,6 +65,7 @@ impl Provider {
             Provider::Claude => "claude",
             Provider::Codex => "codex",
             Provider::Grok => "grok",
+            Provider::Pi => "pi",
         }
     }
 
@@ -87,6 +93,7 @@ impl Provider {
                     || std::env::var_os("OPENAI_API_KEY").is_some_and(|key| !key.is_empty())
             }
             Provider::Grok => super::grok::signed_in(),
+            Provider::Pi => super::pi::signed_in(),
         }
     }
 
@@ -97,12 +104,13 @@ impl Provider {
             Provider::Claude => "claude",
             Provider::Codex => "codex login",
             Provider::Grok => "grok login",
+            Provider::Pi => "pi",
         }
     }
 
     /// The provider with id `id` ("agy", "claude", "codex", "grok").
     pub fn from_id(id: &str) -> Option<Provider> {
-        AUTO.into_iter().find(|p| p.id() == id)
+        ALL.into_iter().find(|p| p.id() == id)
     }
 
     /// Whether it takes Isle's job as its own instructions (a system prompt), once per conversation;
@@ -112,20 +120,20 @@ impl Provider {
     }
 
     /// Every provider, in "auto" order.
-    pub fn all() -> [Provider; 4] {
-        AUTO
+    pub fn all() -> [Provider; 5] {
+        ALL
     }
 
     /// `wanted` ("agy", "claude", "codex", "grok" or "auto"), if installed; for "auto", the first installed and
     /// signed in, else the first installed (which then asks to sign in).
     pub fn pick(wanted: &str) -> Option<Provider> {
         let installed = |p: &Provider| p.program().is_some();
-        match AUTO.into_iter().find(|p| p.id() == wanted) {
+        match ALL.into_iter().find(|p| p.id() == wanted) {
             Some(provider) => installed(&provider).then_some(provider),
-            None => AUTO
+            None => ALL
                 .into_iter()
                 .find(|p| installed(p) && p.signed_in())
-                .or_else(|| AUTO.into_iter().find(installed)),
+                .or_else(|| ALL.into_iter().find(installed)),
         }
     }
 }
@@ -220,6 +228,7 @@ pub enum Brain {
     Claude(Claude),
     Codex(Codex),
     Grok(Grok),
+    Pi(Pi),
 }
 
 impl Brain {
@@ -250,6 +259,7 @@ impl Brain {
             Provider::Grok => {
                 Brain::Grok(Grok::start(&program, model, resume, workspace, instructions).await?)
             }
+            Provider::Pi => Brain::Pi(Pi::start(&program, model, resume, workspace, instructions)?),
         })
     }
 
@@ -257,7 +267,7 @@ impl Brain {
     pub async fn warm(&mut self) -> anyhow::Result<()> {
         match self {
             Brain::Codex(codex) => codex.warm().await,
-            Brain::Agy(_) | Brain::Claude(_) | Brain::Grok(_) => Ok(()),
+            Brain::Agy(_) | Brain::Claude(_) | Brain::Grok(_) | Brain::Pi(_) => Ok(()),
         }
     }
 
@@ -268,6 +278,7 @@ impl Brain {
             Brain::Claude(_) => Provider::Claude,
             Brain::Codex(_) => Provider::Codex,
             Brain::Grok(_) => Provider::Grok,
+            Brain::Pi(_) => Provider::Pi,
         }
     }
 
@@ -284,6 +295,7 @@ impl Brain {
             Brain::Claude(claude) => claude.ask(prompt, activity, draft).await,
             Brain::Codex(codex) => codex.ask(prompt, activity, draft).await,
             Brain::Grok(grok) => grok.ask(prompt, activity, draft).await,
+            Brain::Pi(pi) => pi.ask(prompt, activity, draft).await,
         }
     }
 
@@ -294,6 +306,7 @@ impl Brain {
             Brain::Claude(claude) => claude.conversation.clone(),
             Brain::Codex(codex) => codex.conversation.clone(),
             Brain::Grok(grok) => grok.conversation.clone(),
+            Brain::Pi(pi) => pi.conversation.clone(),
         }
     }
 
@@ -304,6 +317,7 @@ impl Brain {
             Provider::Claude => super::claude::forget(id),
             Provider::Codex => super::codex::forget(id),
             Provider::Grok => super::grok::forget(id),
+            Provider::Pi => super::pi::forget(id),
         }
     }
 
@@ -313,6 +327,7 @@ impl Brain {
         super::claude::prune(today);
         super::codex::prune(today);
         super::grok::prune(today);
+        super::pi::prune(today);
     }
 }
 
@@ -613,7 +628,7 @@ mod tests {
     #[test]
     fn picks_only_installed_providers() {
         assert!(Provider::pick("no-such-provider").is_none_or(|p| p.program().is_some()));
-        for provider in AUTO {
+        for provider in ALL {
             assert!(Provider::pick(provider.id()).is_none_or(|p| p == provider));
         }
     }
