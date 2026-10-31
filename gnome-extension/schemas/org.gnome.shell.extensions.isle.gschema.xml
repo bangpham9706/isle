@@ -298,6 +298,11 @@
       <summary>Send the selected text to the voice assistant</summary>
       <description>So it can work on it ("make this shorter"). Never from terminals or apps kept out of the clipboard history.</description>
     </key>
+    <key name="voice-holds-keyboard" type="b">
+      <default>false</default>
+      <summary>Assistant keeps the keyboard while it thinks</summary>
+      <description>While listening it already takes the keyboard. On, it keeps holding it through thinking and acting, so Esc only says it is in the background; off, the keys go back to your windows as soon as what was said is understood, and the island shows the answer beside them.</description>
+    </key>
     <key name="voice-read-notifications" type="b">
       <default>false</default>
       <summary>Let the voice assistant read notifications</summary>

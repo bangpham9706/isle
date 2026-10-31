@@ -267,6 +267,8 @@ export default class IslePreferences extends ExtensionPreferences {
             'Send the text you have selected, so the AI can work on it; never from terminals or password managers'));
         options.push(switchRow(settings, 'voice-read-notifications', 'Read notifications',
             'Let the AI read your recent notifications when you ask about them'));
+        options.push(switchRow(settings, 'voice-holds-keyboard', 'Keep the keyboard while it thinks',
+            'While the assistant listens and thinks, the island holds your typing; off, your windows get their keys back as soon as what you said is understood'));
         for (const row of options) {
             settings.bind('voice-assistant', row, 'sensitive', Gio.SettingsBindFlags.GET);
             group.add(row);

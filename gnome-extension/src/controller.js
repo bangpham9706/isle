@@ -1984,8 +1984,9 @@ export class Controller {
         this._voice.closeChat();
         this._voice.setState(state);
         this._syncAssistantBusy();
-        // At work, Esc and clicks elsewhere put it back in the background, and Enter or Esc answer its card.
-        if (VOICE_WORKING.includes(state.phase) && !byHover)
+        // At work, the keyboard is only taken for the setting that keeps it (so Esc puts it in the
+        // background); a card of Run or Deny takes it by itself (see `_decide`).
+        if (VOICE_WORKING.includes(state.phase) && !byHover && this._holdsKeyboard)
             this._setKeyboard(true);
         this._render();
         if (this._voiceAnswered)
@@ -1995,6 +1996,11 @@ export class Controller {
     /** The assistant's shortcut as people write it, or '' when it has none. */
     get _voiceShortcut() {
         return Format.shortcutLabel(this._settings.get_strv('voice-shortcut')[0] ?? '');
+    }
+
+    /** Whether the assistant keeps holding the keyboard while it thinks, or gives it back to the windows. */
+    get _holdsKeyboard() {
+        return this._settings.get_boolean('voice-holds-keyboard');
     }
 
     /** How to ask again, under an error: the shortcut, if there is one. */
@@ -2116,6 +2122,11 @@ export class Controller {
             if (this._presentation === 'voice')
                 this._render();
         });
+        // Once something is at work the island needs no keys: `thinking` and `acting` give them back to the
+        // windows (unless it is asked to hold, and the one typing keeps them). A card of Run or Deny takes them
+        // again (see `_decide`).
+        if (VOICE_WORKING.includes(state.phase) && !this._holdsKeyboard && !this._voice.typing && !this._deciding)
+            this._setKeyboard(false);
         // Once answered, typing goes back to the windows; the answer closes on its own.
         if (state.phase === 'reply' || state.phase === 'error') {
             this._listenSent = false;
