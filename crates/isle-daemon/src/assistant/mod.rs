@@ -14,7 +14,6 @@ mod chat;
 mod check;
 mod child;
 mod claude;
-mod pi;
 mod codex;
 #[cfg(test)]
 mod eval;
@@ -23,6 +22,7 @@ mod grok;
 mod mic;
 mod models;
 mod music;
+mod pi;
 mod sign_in;
 mod system;
 mod tasks;

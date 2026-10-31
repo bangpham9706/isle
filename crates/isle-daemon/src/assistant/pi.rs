@@ -135,7 +135,8 @@ impl Pi {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = child::spawn(&mut command).context("could not start pi; is Pi installed?")?;
+        let mut child =
+            child::spawn(&mut command).context("could not start pi; is Pi installed?")?;
         let mut events = Events::new(child.stdout.take().expect("piped stdout"));
         keep_stderr(&mut child, self.stderr.clone());
 
@@ -309,8 +310,12 @@ fn home() -> Option<PathBuf> {
 fn default_model() -> Option<String> {
     let settings = std::fs::read_to_string(home()?.join("settings.json")).ok()?;
     let settings: Value = serde_json::from_str(&settings).ok()?;
-    let provider = settings["defaultProvider"].as_str().filter(|p| !p.is_empty())?;
-    let model = settings["defaultModel"].as_str().filter(|m| !m.is_empty())?;
+    let provider = settings["defaultProvider"]
+        .as_str()
+        .filter(|p| !p.is_empty())?;
+    let model = settings["defaultModel"]
+        .as_str()
+        .filter(|m| !m.is_empty())?;
     Some(format!("{provider}/{model}"))
 }
 
@@ -326,8 +331,7 @@ fn a_session(name: &str) -> bool {
             .strip_suffix(".jsonl")
             .and_then(|name| name.split_once('_'))
             .is_some_and(|(_, id)| {
-                id.len() == 36
-                    && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+                id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
             })
 }
 
@@ -351,9 +355,7 @@ pub fn forget(id: &str) {
 
 /// Deletes Isle's Pi conversations last changed before `today`.
 pub fn prune(today: NaiveDate) {
-    let Some(entries) =
-        std::fs::read_dir(crate::store::data_dir().join("assistant")).ok()
-    else {
+    let Some(entries) = std::fs::read_dir(crate::store::data_dir().join("assistant")).ok() else {
         return;
     };
     for entry in entries.flatten() {
@@ -428,7 +430,10 @@ mod tests {
     fn one_action_on_its_own_is_taken_as_that_action() {
         let media = answer(r#"{"media":{"command":"play_pause"}}"#);
         assert_eq!(media.say, "");
-        assert_eq!(media.actions, [serde_json::json!({"command": "play_pause", "type": "media"})]);
+        assert_eq!(
+            media.actions,
+            [serde_json::json!({"command": "play_pause", "type": "media"})]
+        );
         let opened = answer(r#"{"open_url":{"url":"https://youtube.com"}}"#);
         assert_eq!(opened.actions[0]["type"], "open_url");
         assert_eq!(opened.actions[0]["url"], "https://youtube.com");

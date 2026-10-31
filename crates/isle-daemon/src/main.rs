@@ -11,6 +11,7 @@ mod calendar;
 mod caller;
 mod clipboard;
 mod clock;
+mod desktop;
 mod eds;
 mod http;
 mod login_env;
@@ -186,6 +187,7 @@ async fn run() -> anyhow::Result<()> {
         todo: todo.clone(),
         calendar,
         reminders: server.interface::<_, RemindersService>(OBJECT_PATH).await?,
+        bus: session.clone(),
     };
 
     let session_for_media = session.clone();

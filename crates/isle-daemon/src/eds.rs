@@ -359,7 +359,7 @@ async fn writable(bus: &Connection, target: &Target) -> bool {
 }
 
 /// Every EDS source: its uid and its key file.
-async fn sources(bus: &Connection) -> zbus::Result<HashMap<String, String>> {
+pub async fn sources(bus: &Connection) -> zbus::Result<HashMap<String, String>> {
     type Objects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
     let objects: Objects = bus
         .call_method(
@@ -385,9 +385,9 @@ async fn sources(bus: &Connection) -> zbus::Result<HashMap<String, String>> {
 }
 
 /// A key file's groups and their keys; translated keys ("DisplayName[de]") are left out.
-type KeyFile<'a> = HashMap<&'a str, HashMap<&'a str, &'a str>>;
+pub type KeyFile<'a> = HashMap<&'a str, HashMap<&'a str, &'a str>>;
 
-fn key_file(data: &str) -> KeyFile<'_> {
+pub fn key_file(data: &str) -> KeyFile<'_> {
     let mut groups = KeyFile::new();
     let mut group = None;
     for line in data.lines().map(str::trim) {
@@ -411,7 +411,7 @@ fn key_file(data: &str) -> KeyFile<'_> {
 }
 
 /// The value of `key` in `group`, or "".
-fn value<'a>(file: &KeyFile<'a>, group: &str, key: &str) -> &'a str {
+pub fn value<'a>(file: &KeyFile<'a>, group: &str, key: &str) -> &'a str {
     file.get(group)
         .and_then(|group| group.get(key))
         .copied()
