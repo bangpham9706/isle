@@ -1467,7 +1467,7 @@ async fn turn(
     let facts = tokio::task::spawn_blocking(system::facts)
         .await
         .unwrap_or_default();
-    let data = format!("{facts}\n{}", data.summary().await);
+    let data = format!("{facts}\n{}", data.summary(&text).await);
     let mut prompt = session.prompt(&text, &data);
     let provider = session.brain.as_ref().expect("started above").provider();
     // A conversation this request begins (none to resume): a refused model starts it afresh.

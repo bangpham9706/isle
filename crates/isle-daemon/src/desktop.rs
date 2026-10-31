@@ -9,7 +9,10 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{
+    Datelike, Days, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, TimeZone, Utc,
+    Weekday,
+};
 use futures_util::future::join_all;
 use log::debug;
 use zbus::Connection;
@@ -21,9 +24,19 @@ const CACHE_FOR: Duration = Duration::from_secs(60);
 /// Backends left to isled: "local" is EDS's own calendar, which stands in for Isle's own; its
 /// events are isled's already, and listing them too would say them twice.
 const OWN_BACKENDS: [&str; 1] = ["local"];
+/// A repeat is followed this many occurrences at the most, in case a rule has no end.
+const MAX_OCCURRENCES: u64 = 500;
+
+/// The events as last read, and the days they were read for.
+struct Read {
+    events: Vec<Desktop>,
+    begin: NaiveDate,
+    end: NaiveDate,
+    at: Instant,
+}
 
 /// The events as last read, and when.
-static CACHE: LazyLock<Mutex<Option<(Vec<Desktop>, Instant)>>> = LazyLock::new(Mutex::default);
+static CACHE: LazyLock<Mutex<Option<Read>>> = LazyLock::new(Mutex::default);
 
 /// One of the desktop's events, in Isle's own shape, without Isle's id (the agent's calendar
 /// actions work on Isle's own alone).
@@ -40,21 +53,29 @@ pub struct Desktop {
 
 /// The desktop's events from the day `begin` is on through `end`'s. Empty when EDS says nothing.
 pub async fn events(bus: &Connection, begin: NaiveDate, end: NaiveDate) -> Vec<Desktop> {
-    if let Some((found, at)) = CACHE.lock().unwrap_or_else(PoisonError::into_inner).clone()
-        && at.elapsed() < CACHE_FOR
+    if let Some(read) = CACHE.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+        && read.at.elapsed() < CACHE_FOR
+        && read.begin <= begin
+        && end <= read.end
     {
-        return window(found, begin, end);
+        return cut(&read.events, begin, end);
     }
     let found = read_all(bus, begin, end).await;
-    *CACHE.lock().unwrap_or_else(PoisonError::into_inner) = Some((found.clone(), Instant::now()));
-    window(found, begin, end)
+    *CACHE.lock().unwrap_or_else(PoisonError::into_inner) = Some(Read {
+        events: found.clone(),
+        begin,
+        end,
+        at: Instant::now(),
+    });
+    cut(&found, begin, end)
 }
 
 /// The events kept, cut to the days asked for.
-fn window(all: Vec<Desktop>, begin: NaiveDate, end: NaiveDate) -> Vec<Desktop> {
+fn cut(all: &[Desktop], begin: NaiveDate, end: NaiveDate) -> Vec<Desktop> {
     let (begin, end) = (begin.format("%F").to_string(), end.format("%F").to_string());
-    all.into_iter()
+    all.iter()
         .filter(|event| (begin.as_str()..=end.as_str()).contains(&event.date.as_str()))
+        .cloned()
         .collect()
 }
 
@@ -85,7 +106,7 @@ async fn read_all(bus: &Connection, begin: NaiveDate, end: NaiveDate) -> Vec<Des
             }
             Some(uid.to_owned())
         })
-        .map(|uid| async move { read_one(bus, uid, &query(begin, end)).await })
+        .map(|uid| async move { read_one(bus, uid, &query(begin, end), begin, end).await })
         .collect::<Vec<_>>();
     join_all(reads)
         .await
@@ -101,9 +122,16 @@ async fn read_all(bus: &Connection, begin: NaiveDate, end: NaiveDate) -> Vec<Des
 }
 
 /// One calendar's events of the range, as `Desktop`s. `GetObjectList` answers the iCalendar texts
-/// of a source whole at once, from its cache. A calendar out of reach answers with none; isled
-/// lets go of it however the read went.
-async fn read_one(bus: &Connection, uid: &str, query: &str) -> Result<Vec<Desktop>, zbus::Error> {
+/// of a source whole at once, from its cache; a repeating event is answered once, as its rule, so
+/// it is spread over the range here. A calendar out of reach answers with none; isled lets go of it
+/// however the read went.
+async fn read_one(
+    bus: &Connection,
+    uid: &str,
+    query: &str,
+    begin: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<Desktop>, zbus::Error> {
     let (path, name) = eds::timed(eds::open_calendar(bus, uid)).await?;
     let opened = eds::timed(bus.call_method(
         Some(name.as_str()),
@@ -131,7 +159,10 @@ async fn read_one(bus: &Connection, uid: &str, query: &str) -> Result<Vec<Deskto
         }
     };
     eds::close_calendar(bus, &path, &name, uid).await;
-    Ok(ics.iter().flat_map(|text| text_events(text)).collect())
+    Ok(ics
+        .iter()
+        .flat_map(|text| text_events(text, begin, end))
+        .collect())
 }
 
 /// An EDS source of the range, its own words: a day before `begin` and two after `end`, so events
@@ -158,22 +189,34 @@ fn midnight(day: NaiveDate) -> String {
     at.format("%Y%m%dT%H%M%SZ").to_string()
 }
 
-/// An ics text's VEVENTs, as `Desktop`s.
-fn text_events(ics: &str) -> Vec<Desktop> {
+/// An ics text's VEVENTs as they fall between `begin` and `end`, as `Desktop`s: a repeating event
+/// once for each of its occurrences in the range, the way the calendar itself shows it.
+fn text_events(ics: &str, begin: NaiveDate, end: NaiveDate) -> Vec<Desktop> {
     let lines = unfolded(ics);
-    let mut found = Vec::new();
+    let mut entries: Vec<Entry> = Vec::new();
     let mut vevent: Vec<&str> = Vec::new();
     for line in &lines {
         match line.as_str() {
             "BEGIN:VEVENT" => vevent.clear(),
             "END:VEVENT" => {
-                if let Some(event) = vevent_event(&vevent) {
-                    found.push(event);
+                if let Some(entry) = entry(&vevent) {
+                    entries.push(entry);
                 }
             }
             _ => vevent.push(line),
         }
     }
+    // An occurrence moved to another day (its own RECURRENCE-ID) stands in for the one its repeat
+    // would have put there.
+    let moved: Vec<(String, NaiveDate)> = entries
+        .iter()
+        .filter_map(|entry| Some((entry.uid.clone()?, entry.moved?.date())))
+        .collect();
+    let mut found: Vec<Desktop> = entries
+        .iter()
+        .flat_map(|entry| entry.occurrences(begin, end, &moved))
+        .collect();
+    found.sort_by(|one, other| (&one.date, &one.start).cmp(&(&other.date, &other.start)));
     found
 }
 
@@ -191,42 +234,282 @@ fn unfolded(ics: &str) -> Vec<String> {
     })
 }
 
-/// A VEVENT's lines as one `Desktop`: its summary and its start (and end) read, or none when there
-/// is no summary or no start.
-fn vevent_event(lines: &[&str]) -> Option<Desktop> {
-    let mut summary = "";
-    let mut start: Option<(&str, &str)> = None;
-    let mut end: Option<(&str, &str)> = None;
+/// A VEVENT's lines as one entry: its summary, when it starts and ends, and how it repeats.
+struct Entry {
+    title: String,
+    /// The event's own name, shared by its repeat and the occurrences moved apart from it.
+    uid: Option<String>,
+    /// The day this occurrence was moved to, for one standing apart from its repeat.
+    moved: Option<Starts>,
+    start: Starts,
+    end: Option<Starts>,
+    rrule: Option<Rrule>,
+    exdates: Vec<Starts>,
+}
+
+/// A VEVENT's lines as one [`Entry`], or none when it has no summary or no start.
+fn entry(lines: &[&str]) -> Option<Entry> {
+    let mut summary = String::new();
+    let mut uid = None;
+    let mut moved = None;
+    let mut start = None;
+    let mut end = None;
+    let mut repeat = None;
+    let mut exdates = Vec::new();
     for line in lines {
         let (name, value) = line.split_once(':')?;
         let value = value.trim();
         if value.is_empty() {
             continue;
         }
-        let (name, params) = name.split_once(';').unwrap_or((name, ""));
+        let (name, _) = name.split_once(';').unwrap_or((name, ""));
         match name {
-            "SUMMARY" if summary.is_empty() => summary = value,
-            "DTSTART" => start = Some((params, value)),
-            "DTEND" => end = Some((params, value)),
+            "SUMMARY" if summary.is_empty() => summary = title(value),
+            "UID" => uid = Some(value.to_owned()),
+            "DTSTART" => start = Some(starts(value)?),
+            "DTEND" => end = Some(starts(value)?),
+            "RECURRENCE-ID" => moved = Some(starts(value)?),
+            "RRULE" => repeat = Some(rrule(value)),
+            "EXDATE" => exdates.extend(value.split(',').filter_map(starts)),
             _ => {}
         }
     }
-    let (start_params, start_value) = start?;
-    if summary.is_empty() {
-        return None;
-    }
-    let (date, start) = when(start_params, start_value)?;
-    // The end only counts when the event ends that same day; models reading "HH:MM" do not follow
-    // an event over midnight. An all-day one has neither time.
-    let end = end
-        .and_then(|(params, value)| when(params, value))
-        .and_then(|(end_date, end_time)| if end_date == date { end_time } else { None });
-    Some(Desktop {
-        title: title(summary),
-        date,
+    let start = start?;
+    (!summary.is_empty()).then_some(Entry {
+        title: summary,
+        uid,
+        moved,
         start,
         end,
+        rrule: repeat,
+        exdates,
     })
+}
+
+impl Entry {
+    /// This entry's occurrences from `begin` to `end`, one `Desktop` each. `moved` holds the days
+    /// other entries of the same event have claimed (`uid`, day): the repeat does not run there.
+    fn occurrences(
+        &self,
+        begin: NaiveDate,
+        end: NaiveDate,
+        moved: &[(String, NaiveDate)],
+    ) -> Vec<Desktop> {
+        let (time, all_day) = match self.start {
+            Starts::Day(_) => (NaiveTime::MIN, true),
+            Starts::At(at) => (at.time(), false),
+        };
+        let length = self
+            .end
+            .map(|end| end.at() - self.start.at())
+            .filter(|length| *length >= TimeDelta::zero());
+        let kept = |day: NaiveDate| {
+            !self.exdates.iter().any(|skip| skip.matches(day, time))
+                && !moved
+                    .iter()
+                    .any(|(uid, at)| self.uid.as_deref() == Some(uid.as_str()) && *at == day)
+        };
+        self.days(end)
+            .into_iter()
+            .filter(|day| *day >= begin && *day <= end && kept(*day))
+            .map(|day| Desktop {
+                title: self.title.clone(),
+                date: day.format("%F").to_string(),
+                start: (!all_day).then(|| time.format("%H:%M").to_string()),
+                end: length
+                    .map(|length| day.and_time(time) + length)
+                    .filter(|at| at.date() == day)
+                    .map(|at| at.format("%H:%M").to_string()),
+            })
+            .collect()
+    }
+
+    /// The days this event falls on, from its first on through `end`'s day, as its rule says: its
+    /// start alone when it does not repeat.
+    fn days(&self, end: NaiveDate) -> Vec<NaiveDate> {
+        let from = self.start.date();
+        let Some(rule) = &self.rrule else {
+            return vec![from];
+        };
+        let time = self.start.at().time();
+        let all_day = matches!(self.start, Starts::Day(_));
+        let horizon = end.succ_opt().unwrap_or(end);
+        let over = |day: NaiveDate| {
+            day > horizon
+                || rule.until.is_some_and(|until| {
+                    if all_day {
+                        day > until.date()
+                    } else {
+                        day.and_time(time) > until
+                    }
+                })
+        };
+        let weekdays: Vec<Weekday> = if rule.weekdays.is_empty() {
+            vec![from.weekday()]
+        } else {
+            rule.weekdays.clone()
+        };
+        let monday = from - Days::new(from.weekday().num_days_from_monday().into());
+        let mut days = Vec::new();
+        let mut step = 0u64;
+        while (days.len() as u64) < MAX_OCCURRENCES {
+            let batch: Vec<NaiveDate> = match rule.freq {
+                Freq::Daily => vec![from + Days::new(rule.interval as u64 * step)],
+                Freq::Weekly => {
+                    let base = monday + Days::new(rule.interval as u64 * 7 * step);
+                    weekdays
+                        .iter()
+                        .map(|weekday| base + Days::new(weekday.num_days_from_monday().into()))
+                        .filter(|day| *day >= from)
+                        .collect()
+                }
+                Freq::Monthly => add_months(from, rule.interval as i32 * step as i32)
+                    .into_iter()
+                    .collect(),
+                Freq::Yearly => add_months(from, 12 * rule.interval as i32 * step as i32)
+                    .into_iter()
+                    .collect(),
+            };
+            let empty = batch.is_empty();
+            match batch.iter().find(|day| over(**day)).copied() {
+                Some(stop) => {
+                    days.extend(batch.iter().take_while(|day| **day < stop).copied());
+                    break;
+                }
+                None => days.extend(batch),
+            }
+            step += 1;
+            // A month or year without that day is stepped over, so an empty batch is not the end.
+            if empty && step > MAX_OCCURRENCES {
+                break;
+            }
+        }
+        days.truncate(rule.count.map_or(usize::MAX, |count| count as usize));
+        days.sort_unstable();
+        days.dedup();
+        days
+    }
+}
+
+/// When an event starts: a whole day, or a time on one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Starts {
+    Day(NaiveDate),
+    At(NaiveDateTime),
+}
+
+impl Starts {
+    fn date(self) -> NaiveDate {
+        match self {
+            Starts::Day(day) => day,
+            Starts::At(at) => at.date(),
+        }
+    }
+
+    fn at(self) -> NaiveDateTime {
+        match self {
+            Starts::Day(day) => day.and_time(NaiveTime::MIN),
+            Starts::At(at) => at,
+        }
+    }
+
+    /// Whether this is the day (and time, timed) that `day` and `time` name.
+    fn matches(self, day: NaiveDate, time: NaiveTime) -> bool {
+        match self {
+            Starts::Day(at) => at == day,
+            Starts::At(at) => at.date() == day && at.time() == time,
+        }
+    }
+}
+
+/// An ics date or date-time as a [`Starts`]: a day alone ("20261105") is an all-day one; "...Z" is
+/// UTC (Google's usual); a `TZID` or a bare one is the wall clock where the user is, as shown.
+fn starts(value: &str) -> Option<Starts> {
+    let value = value.trim();
+    if value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Some(Starts::Day(NaiveDate::parse_from_str(value, "%Y%m%d").ok()?));
+    }
+    let utc = value.ends_with('Z');
+    let wall = NaiveDateTime::parse_from_str(value.trim_end_matches('Z'), "%Y%m%dT%H%M%S").ok()?;
+    let at = if utc {
+        Local.from_utc_datetime(&wall).naive_local()
+    } else {
+        Local.from_local_datetime(&wall).earliest()?.naive_local()
+    };
+    Some(Starts::At(at))
+}
+
+/// How an event repeats, as its `RRULE` says: as much of RFC 5545 as the calendars met use.
+struct Rrule {
+    freq: Freq,
+    interval: u32,
+    count: Option<u32>,
+    until: Option<NaiveDateTime>,
+    weekdays: Vec<Weekday>,
+}
+
+enum Freq {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+/// An `RRULE`'s words as a rule; parts Isle does not use are passed over.
+fn rrule(text: &str) -> Rrule {
+    let mut rule = Rrule {
+        freq: Freq::Weekly,
+        interval: 1,
+        count: None,
+        until: None,
+        weekdays: Vec::new(),
+    };
+    for part in text.split(';') {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        match key {
+            "FREQ" => {
+                rule.freq = match value {
+                    "DAILY" => Freq::Daily,
+                    "MONTHLY" => Freq::Monthly,
+                    "YEARLY" => Freq::Yearly,
+                    _ => Freq::Weekly,
+                };
+            }
+            "INTERVAL" => rule.interval = value.parse::<u32>().unwrap_or(1).max(1),
+            "COUNT" => rule.count = value.parse().ok(),
+            "UNTIL" => rule.until = starts(value).map(Starts::at),
+            "BYDAY" => rule.weekdays = value.split(',').filter_map(weekday).collect(),
+            _ => {}
+        }
+    }
+    rule
+}
+
+/// "MO" through "SU" as a weekday; an order prefix ("2MO") is passed over.
+fn weekday(text: &str) -> Option<Weekday> {
+    match text
+        .trim_start_matches(|char: char| char.is_ascii_digit())
+        .to_uppercase()
+        .as_str()
+    {
+        "MO" => Some(Weekday::Mon),
+        "TU" => Some(Weekday::Tue),
+        "WE" => Some(Weekday::Wed),
+        "TH" => Some(Weekday::Thu),
+        "FR" => Some(Weekday::Fri),
+        "SA" => Some(Weekday::Sat),
+        "SU" => Some(Weekday::Sun),
+        _ => None,
+    }
+}
+
+/// `day` moved `months` on in the calendar: the same day of the month, or none where there is no
+/// such day (the 31st of a short month).
+fn add_months(day: NaiveDate, months: i32) -> Option<NaiveDate> {
+    let months = day.year() * 12 + day.month0() as i32 + months;
+    NaiveDate::from_ymd_opt(months.div_euclid(12), months.rem_euclid(12) as u32 + 1, day.day())
 }
 
 /// An ics summary as plain words: its escapes (`\,`, `\;`, `\\`, `\n`) undone.
@@ -248,30 +531,110 @@ fn title(text: &str) -> String {
     out.trim().to_owned()
 }
 
-/// An ics date or date-time as ("YYYY-MM-DD", "HH:MM" or `None` for an all-day date). A day alone
-/// is an all-day one; "…Z" is UTC (Google's usual); a `TZID` or a bare one is the wall clock where
-/// the user is: the same times the calendar shows.
-fn when(params: &str, value: &str) -> Option<(String, Option<String>)> {
-    let _ = params; // the TZID itself is not read: EDS's own ones are common enough to pass over
-    // All day: "20261105".
-    if value.len() == 8 && value.bytes().all(|char| char.is_ascii_digit()) {
-        let day = NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
-        return Some((format_day(day), None));
-    }
-    let utc = value.ends_with('Z');
-    let wall = NaiveDateTime::parse_from_str(value.trim_end_matches('Z'), "%Y%m%dT%H%M%S").ok()?;
-    let at = if utc {
-        Local.from_utc_datetime(&wall)
-    } else {
-        Local.from_local_datetime(&wall).earliest()?
-    };
-    Some((
-        format_day(at.date_naive()),
-        Some(at.format("%H:%M").to_string()),
-    ))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// The day as "YYYY-MM-DD".
-fn format_day(day: NaiveDate) -> String {
-    day.format("%F").to_string()
+    fn day(day: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(day, "%F").unwrap()
+    }
+
+    /// A calendar's answer, as EDS gives it: one VEVENT per line group.
+    fn ics(vevents: &[&str]) -> String {
+        vevents
+            .iter()
+            .map(|body| format!("BEGIN:VCALENDAR\nBEGIN:VEVENT\n{body}\nEND:VEVENT\nEND:VCALENDAR"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_plain_event_falls_on_its_own_day() {
+        let text = ics(&["UID:1\nSUMMARY:Standup\nDTSTART:20261021T090000\nDTEND:20261021T091500"]);
+        assert_eq!(
+            text_events(&text, day("2026-10-20"), day("2026-10-22")),
+            [Desktop {
+                title: "Standup".into(),
+                date: "2026-10-21".into(),
+                start: Some("09:00".into()),
+                end: Some("09:15".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_weekly_repeat_comes_once_a_week() {
+        let text = ics(&[
+            "UID:1\nSUMMARY:Class\nDTSTART:20260825T090000\nDTEND:20260825T115000\n\
+             RRULE:FREQ=WEEKLY;UNTIL=20261208T020000Z",
+        ]);
+        let found = text_events(&text, day("2026-09-07"), day("2026-09-21"));
+        assert_eq!(
+            found.iter().map(|event| event.date.as_str()).collect::<Vec<_>>(),
+            ["2026-09-08", "2026-09-15"]
+        );
+    }
+
+    #[test]
+    fn a_moved_occurrence_takes_the_day_it_moved_to() {
+        let text = ics(&[
+            "UID:1\nSUMMARY:Class\nDTSTART:20260825T090000\nDTEND:20260825T115000\n\
+             RRULE:FREQ=WEEKLY;UNTIL=20261208T020000Z",
+            "UID:1\nRECURRENCE-ID:20260908T090000\nSUMMARY:Class\n\
+             DTSTART:20260910T130000\nDTEND:20260910T155000",
+        ]);
+        let found = text_events(&text, day("2026-09-07"), day("2026-09-21"));
+        assert_eq!(
+            found
+                .iter()
+                .map(|event| (event.date.as_str(), event.start.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                ("2026-09-10", Some("13:00")),
+                ("2026-09-15", Some("09:00")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_skipped_day_is_left_out() {
+        let text = ics(&[
+            "UID:1\nSUMMARY:Class\nDTSTART:20260825T090000\nEXDATE:20260908T090000\n\
+             RRULE:FREQ=WEEKLY;COUNT=4",
+        ]);
+        let found = text_events(&text, day("2026-08-24"), day("2026-09-30"));
+        assert_eq!(
+            found.iter().map(|event| event.date.as_str()).collect::<Vec<_>>(),
+            ["2026-08-25", "2026-09-01", "2026-09-15"]
+        );
+    }
+
+    #[test]
+    fn an_all_day_event_has_no_times() {
+        let text = ics(&["UID:1\nSUMMARY:Holiday\nDTSTART;VALUE=DATE:20261105"]);
+        assert_eq!(
+            text_events(&text, day("2026-11-01"), day("2026-11-10")),
+            [Desktop {
+                title: "Holiday".into(),
+                date: "2026-11-05".into(),
+                start: None,
+                end: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn events_outside_the_range_are_left_out() {
+        let text = ics(&[
+            "UID:1\nSUMMARY:Near\nDTSTART:20261105T090000",
+            "UID:2\nSUMMARY:Far\nDTSTART:20261225T090000",
+        ]);
+        assert_eq!(
+            text_events(&text, day("2026-11-01"), day("2026-11-10"))
+                .iter()
+                .map(|event| event.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Near"]
+        );
+    }
 }

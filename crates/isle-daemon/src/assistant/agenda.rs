@@ -6,7 +6,7 @@
 
 use std::fmt::Write;
 
-use chrono::{DateTime, Days, NaiveDate, TimeZone};
+use chrono::{DateTime, Datelike, Days, NaiveDate, TimeZone};
 use isle_core::calendar::Event;
 use isle_core::reminders::Reminder;
 use isle_core::todo::TodoItem;
@@ -20,10 +20,13 @@ use crate::todo::TodoService;
 
 /// Each list shows at most this many items.
 const MAX_ITEMS: usize = 15;
+/// The calendar shows more: two weeks of a full timetable runs past what the shorter lists need.
+const MAX_EVENTS: usize = 40;
 /// A longer title is cut to this many characters.
 const MAX_TITLE_CHARS: usize = 100;
-/// Events are listed for today and this many days after.
-const DAYS_AHEAD: u64 = 6;
+/// Events are listed for today and this many days after: two weeks, so the assistant can answer for
+/// this week and the next alike; it tells them apart by the day each is on.
+const DAYS_AHEAD: u64 = 13;
 
 /// The services that keep the user's data, and the session bus to ask EDS on.
 pub struct Sources {
@@ -34,8 +37,8 @@ pub struct Sources {
 }
 
 impl Sources {
-    /// The summary as of now.
-    pub async fn summary(&self) -> String {
+    /// The summary as of now, cut to the days `asked` names when it names them.
+    pub async fn summary(&self, asked: &str) -> String {
         let todo = self.todo.get().await;
         let calendar = self.calendar.get().await;
         let reminders = self.reminders.get().await;
@@ -51,11 +54,13 @@ impl Sources {
             reminders.reminders().items(),
             &now,
             &desktop,
+            asked_range(asked, today),
         )
     }
 }
 
-/// Open to-dos, events from today to six days on (Isle's own and the desktop calendars' alike), and
+/// Open to-dos, events from today to thirteen days on (Isle's own and the desktop calendars'
+/// alike), and
 /// pending reminders, in plain text.
 pub fn summary<Tz: TimeZone>(
     todos: &[TodoItem],
@@ -63,6 +68,7 @@ pub fn summary<Tz: TimeZone>(
     reminders: &[Reminder],
     now: &DateTime<Tz>,
     desktop: &[Desktop],
+    focus: Option<(NaiveDate, NaiveDate, String)>,
 ) -> String {
     let mut text = String::new();
 
@@ -77,12 +83,22 @@ pub fn summary<Tz: TimeZone>(
     let last = today
         .checked_add_days(Days::new(DAYS_AHEAD))
         .unwrap_or(today);
+    // What the question names is all that is listed, so the assistant need not cut the two weeks down
+    // itself; a question that names no days gets them whole.
+    let (from, to, heading) = match focus {
+        Some((begin, end, label)) => (begin, end, format!("Calendar ({label})")),
+        None => (
+            today,
+            last,
+            format!("Calendar, {today} to {last} (list only the days the person asked about)"),
+        ),
+    };
     // Each isled's own event's line, ready, so a desktop one that is the same event is not said twice.
     let coming: Vec<(NaiveDate, Option<String>, String)> = events
         .iter()
         .filter_map(|event| {
             let day = NaiveDate::parse_from_str(&event.date, "%Y-%m-%d").ok()?;
-            ((today..=last).contains(&day)).then_some((day, event))
+            ((from..=to).contains(&day)).then_some((day, event))
         })
         .map(|(day, event)| (day, event.start.clone(), own_line(day, event)))
         .collect();
@@ -91,7 +107,7 @@ pub fn summary<Tz: TimeZone>(
         let Ok(day) = NaiveDate::parse_from_str(&one.date, "%Y-%m-%d") else {
             continue;
         };
-        if !(today..=last).contains(&day) {
+        if !(from..=to).contains(&day) {
             continue;
         }
         // One that isle's own sent to a desktop calendar and that calendar lists: not said twice.
@@ -103,16 +119,16 @@ pub fn summary<Tz: TimeZone>(
         }) {
             continue;
         }
-        lines.push((day, one.start.clone(), desktop_line(one)));
+        lines.push((day, one.start.clone(), desktop_line(day, one)));
     }
     // All-day ones (no start) come first in their day.
     lines.sort_by(|(a_day, a_start, _), (b_day, b_start, _)| {
         (a_day, a_start).cmp(&(b_day, b_start))
     });
-    let heading = format!("Calendar, {today} to {last}");
-    list(
+    list_capped(
         &mut text,
         &heading,
+        MAX_EVENTS,
         lines.into_iter().map(|(_, _, line)| line),
     );
 
@@ -134,6 +150,32 @@ pub fn summary<Tz: TimeZone>(
     text
 }
 
+/// The days a question names ("today", "tomorrow", "this week", "next week"), as the range to list
+/// and what to call it: none when it names no days, and the two weeks are listed whole.
+fn asked_range(asked: &str, today: NaiveDate) -> Option<(NaiveDate, NaiveDate, String)> {
+    let asked = asked.to_lowercase();
+    let on = |offset: u64| today.checked_add_days(Days::new(offset));
+    let named = |asked: &str, words: &[&str]| words.iter().any(|word| asked.contains(word));
+    if named(&asked, &["today", "hôm nay"]) {
+        return Some((today, today, format!("today, {today}")));
+    }
+    if named(&asked, &["tomorrow", "ngày mai"]) {
+        let day = on(1)?;
+        return Some((day, day, format!("tomorrow, {day}")));
+    }
+    let monday = u64::from(today.weekday().num_days_from_monday());
+    // This week runs to Sunday, the last of its days.
+    if named(&asked, &["this week", "tuần này"]) {
+        let sunday = on(6 - monday)?;
+        return Some((today, sunday, format!("this week, {today} to {sunday}")));
+    }
+    if named(&asked, &["next week", "tuần sau", "tuần tới"]) {
+        let (first, last) = (on(7 - monday)?, on(13 - monday)?);
+        return Some((first, last, format!("next week, {first} to {last}")));
+    }
+    None
+}
+
 /// One isled's own event as a calendar line, with its Isle id (the agent can act on it).
 fn own_line(day: NaiveDate, event: &Event) -> String {
     let time = match (&event.start, &event.end) {
@@ -149,33 +191,45 @@ fn own_line(day: NaiveDate, event: &Event) -> String {
     )
 }
 
-/// One of the desktop's calendars' events as a calendar line: no Isle id (the agent's calendar
-/// actions cannot act on it), and where it came from said.
-fn desktop_line(event: &Desktop) -> String {
+/// One of the desktop's calendars' events as a calendar line: its day (the agent can only answer
+/// which day something is on if it is told), no Isle id (the agent's calendar actions cannot act on
+/// it), and where it came from said.
+fn desktop_line(day: NaiveDate, event: &Desktop) -> String {
     let time = match (&event.start, &event.end) {
         (Some(start), Some(end)) => format!("{start}-{end}"),
         (Some(start), None) => start.clone(),
         (None, _) => "all day".into(),
     };
     format!(
-        "{}, {time} — from a desktop calendar (GNOME)",
+        "{}, {time}: {} — from a desktop calendar (GNOME)",
+        day.format("%a %Y-%m-%d"),
         title(&event.title)
     )
 }
 
 /// Writes a heading and up to [`MAX_ITEMS`] items, or "none".
 fn list(text: &mut String, heading: &str, items: impl Iterator<Item = String>) {
+    list_capped(text, heading, MAX_ITEMS, items);
+}
+
+/// The same, with its own cut: what the calendar uses.
+fn list_capped(
+    text: &mut String,
+    heading: &str,
+    most: usize,
+    items: impl Iterator<Item = String>,
+) {
     let items: Vec<String> = items.collect();
     if items.is_empty() {
         let _ = writeln!(text, "{heading}: none");
         return;
     }
     let _ = writeln!(text, "{heading}:");
-    for item in items.iter().take(MAX_ITEMS) {
+    for item in items.iter().take(most) {
         let _ = writeln!(text, "- {item}");
     }
-    if items.len() > MAX_ITEMS {
-        let _ = writeln!(text, "- and {} more", items.len() - MAX_ITEMS);
+    if items.len() > most {
+        let _ = writeln!(text, "- and {} more", items.len() - most);
     }
 }
 
@@ -232,9 +286,9 @@ mod tests {
     #[test]
     fn says_none_for_empty_lists() {
         assert_eq!(
-            summary(&[], &[], &[], &now(), &[]),
+            summary(&[], &[], &[], &now(), &[], None),
             "Reminders (your to-dos on Isle's Reminders page): none\n\
-             Calendar, 2026-10-21 to 2026-10-27: none\n\
+             Calendar, 2026-10-21 to 2026-11-03 (list only the days the person asked about): none\n\
              Timed reminders (alerts Isle sets itself): none"
         );
     }
@@ -247,7 +301,7 @@ mod tests {
             event(2, "2026-10-21", Some("09:00"), Some("09:15"), "Standup"),
             event(3, "2026-10-21", None, None, "Holiday"),
             event(4, "2026-10-27", Some("20:00"), None, "Dinner"),
-            event(5, "2026-10-28", None, None, "Too far"),
+            event(5, "2026-11-10", None, None, "Too far"),
         ];
         // 2026-10-21 07:30 UTC is 14:30 in UTC+7.
         let due = now().timestamp_millis() + 4 * 3600 * 1000 + 30 * 60 * 1000;
@@ -257,10 +311,10 @@ mod tests {
             due_ms: due,
         }];
         assert_eq!(
-            summary(&todos, &events, &reminders, &now(), &[]),
+            summary(&todos, &events, &reminders, &now(), &[], None),
             "Reminders (your to-dos on Isle's Reminders page):\n\
              - [#1] Buy milk\n\
-             Calendar, 2026-10-21 to 2026-10-27:\n\
+             Calendar, 2026-10-21 to 2026-11-03 (list only the days the person asked about):\n\
              - [#3] Wed 2026-10-21, all day: Holiday\n\
              - [#2] Wed 2026-10-21, 09:00-09:15: Standup\n\
              - [#4] Tue 2026-10-27, 20:00: Dinner\n\
@@ -284,19 +338,44 @@ mod tests {
             desktop("Too far", "2026-11-20", None, None),
         ];
         assert_eq!(
-            summary(&[], &events, &[], &now(), &desktop),
+            summary(&[], &events, &[], &now(), &desktop, None),
             "Reminders (your to-dos on Isle's Reminders page): none\n\
-             Calendar, 2026-10-21 to 2026-10-27:\n\
+             Calendar, 2026-10-21 to 2026-11-03 (list only the days the person asked about):\n\
              - [#1] Wed 2026-10-21, 09:00-09:15: Standup\n\
-             - M05W03, 20:00-22:00 — from a desktop calendar (GNOME)\n\
+             - Wed 2026-10-21, 20:00-22:00: M05W03 — from a desktop calendar (GNOME)\n\
              Timed reminders (alerts Isle sets itself): none"
+        );
+    }
+
+    #[test]
+    fn a_question_naming_a_day_lists_only_that_day() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 21).unwrap();
+        let focus = asked_range("What's on my calendar today?", today);
+        assert_eq!(
+            focus,
+            Some((today, today, format!("today, {today}")))
+        );
+        let events = [
+            event(1, "2026-10-21", Some("20:00"), Some("22:00"), "Today"),
+            event(2, "2026-10-22", Some("20:00"), Some("22:00"), "Tomorrow"),
+        ];
+        let text = summary(&[], &events, &[], &now(), &[], focus);
+        assert!(text.contains("- [#1] Wed 2026-10-21, 20:00-22:00: Today"));
+        assert!(!text.contains("Tomorrow"));
+        assert_eq!(
+            asked_range("what about next week", today),
+            Some((
+                NaiveDate::from_ymd_opt(2026, 10, 26).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+                "next week, 2026-10-26 to 2026-11-01".into()
+            ))
         );
     }
 
     #[test]
     fn caps_long_lists_and_titles() {
         let todos: Vec<TodoItem> = (0..20).map(|id| todo(id, "x", false)).collect();
-        let text = summary(&todos, &[], &[], &now(), &[]);
+        let text = summary(&todos, &[], &[], &now(), &[], None);
         assert_eq!(text.matches("] x\n").count(), MAX_ITEMS);
         assert!(text.contains("- and 5 more\n"));
         assert_eq!(title(&"a".repeat(150)), format!("{}…", "a".repeat(100)));
