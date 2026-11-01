@@ -11,7 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use isle_core::lrc::{self, LyricLine};
-use isle_core::track::{full_title, search_terms};
+use isle_core::track::{artist_forms, full_title, search_terms};
 use log::{debug, warn};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -29,8 +29,10 @@ const USER_AGENT: &str = concat!(
 /// How far a search result's length may differ from the track's, in seconds.
 const DURATION_TOLERANCE: f64 = 3.0;
 /// LRCLIB often answers "busy" (HTTP 503) or "slow down" (429) for a moment;
-/// ask again this many times before giving up on the lookup.
-const BUSY_RETRIES: u32 = 2;
+/// ask again this many times before giving up on the lookup. Its busy spells
+/// have been measured to last some seconds, so the waits below add up to more
+/// than that; giving in sooner is what shows as "Lyrics are busy right now".
+const BUSY_RETRIES: u32 = 4;
 /// Wait before asking again, unless the server says (`Retry-After`), and the
 /// most we wait however long it asks for.
 const BUSY_WAIT: Duration = Duration::from_secs(1);
@@ -201,36 +203,39 @@ fn cached(path: &Path) -> Option<Lyrics> {
     Some(lyrics)
 }
 
-/// Asks LRCLIB in three steps, from the most exact to the loosest.
+/// Asks LRCLIB in three steps, from the most exact to the loosest, and repeats
+/// the two first for the other ways the same artists are written (see [`artist_forms`]).
 fn lookup(query: &TrackQuery, title: String, artist: String) -> Result<Option<Record>, Failure> {
     let duration = format!("{:.0}", query.length_s);
 
-    // An exact match on title, artist, album and duration is the most precise.
-    // LRCLIB takes a length of 1 s to an hour; under a second rounds to 0, which it refuses.
-    if !artist.is_empty() && query.length_s >= 0.5 {
-        let exact = get_json::<Record>(
-            "get",
-            &[
-                ("track_name", &title),
-                ("artist_name", &artist),
-                ("album_name", &query.album),
-                ("duration", &duration),
-            ],
-        )?;
-        if let Some(record) = exact.filter(has_lyrics) {
+    for artist in artist_forms(&artist) {
+        // An exact match on title, artist, album and duration is the most precise.
+        // LRCLIB takes a length of 1 s to an hour; under a second rounds to 0, which it refuses.
+        if !artist.is_empty() && query.length_s >= 0.5 {
+            let exact = get_json::<Record>(
+                "get",
+                &[
+                    ("track_name", &title),
+                    ("artist_name", &artist),
+                    ("album_name", &query.album),
+                    ("duration", &duration),
+                ],
+            )?;
+            if let Some(record) = exact.filter(has_lyrics) {
+                return Ok(Some(record));
+            }
+        }
+
+        // Otherwise search, preferring synced lyrics of about the right length.
+        // Without an artist any song of that name matches, so the length must fit.
+        let mut params = vec![("track_name", title.as_str())];
+        if !artist.is_empty() {
+            params.push(("artist_name", artist.as_str()));
+        }
+        let results = get_json::<Vec<Record>>("search", &params)?.unwrap_or_default();
+        if let Some(record) = best_match(results, query.length_s, &artist, artist.is_empty()) {
             return Ok(Some(record));
         }
-    }
-
-    // Otherwise search, preferring synced lyrics of about the right length.
-    // Without an artist any song of that name matches, so the length must fit.
-    let mut params = vec![("track_name", title.as_str())];
-    if !artist.is_empty() {
-        params.push(("artist_name", artist.as_str()));
-    }
-    let results = get_json::<Vec<Record>>("search", &params)?.unwrap_or_default();
-    if let Some(record) = best_match(results, query.length_s, &artist, artist.is_empty()) {
-        return Ok(Some(record));
     }
 
     // Last, for YouTube-style titles, search the whole title as free text (catches a wrongly
@@ -482,5 +487,21 @@ mod tests {
         assert!(LyricsStatus::Error.is_failure());
         assert!(LyricsStatus::Unavailable.is_failure());
         assert!(!LyricsStatus::NotFound.is_failure());
+    }
+
+    #[test]
+    #[ignore = "asks LRCLIB, and LRCLIB is busy at times"]
+    fn finds_a_collaboration_as_a_browser_names_it() {
+        let query = TrackQuery {
+            title: "Love Me Harder".into(),
+            artist: "Ariana Grande và The Weeknd".into(),
+            album: "My Everything (Deluxe)".into(),
+            length_s: 236.0,
+        };
+        let (title, artist) = search_terms(&query.title, &query.artist);
+        assert!(
+            lookup(&query, title, artist).unwrap().is_some(),
+            "LRCLIB answered, but not with this song's lyrics"
+        );
     }
 }

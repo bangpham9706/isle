@@ -85,6 +85,42 @@ fn strip_noise(title: &str) -> String {
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Words a browser puts between the artists of a collaboration when its page is
+/// in that language. YouTube sends "Ariana Grande và The Weeknd" from a
+/// Vietnamese tab, and only LRCLIB's own spellings find a lyrics entry.
+const ARTIST_JOINS: &[&str] = &["and", "và", "und", "et", "y", "e", "ja", "och", "и", "та"];
+
+/// The artist names to look up, most likely first: the collaboration as LRCLIB
+/// writes it, the name as the player sent it, and the first artist alone. A name
+/// without a join word has the one form, so a lookup is never asked twice.
+pub fn artist_forms(artist: &str) -> Vec<String> {
+    let artist = artist.trim();
+    let separators = || ARTIST_JOINS.iter().map(|word| format!(" {word} "));
+    let parts: Vec<String> = match separators().find(|sep| artist.contains(sep.as_str())) {
+        Some(sep) => artist
+            .split(sep.as_str())
+            .map(str::trim)
+            .filter(|part| is_name(part))
+            .map(str::to_owned)
+            .collect(),
+        None => Vec::new(),
+    };
+    if parts.len() < 2 {
+        return vec![artist.to_owned()];
+    }
+    // Chasing every artist of a mash-up would ask too much of a busy LRCLIB.
+    vec![parts.join(", "), artist.to_owned(), parts[0].clone()]
+}
+
+/// Whether a part of an artist name reads as an artist: it has a word of more
+/// than one letter in it. Names spelled out letter by letter — the way the
+/// slowed-and-reverb channels write "v e i l" — are no collaboration, and the
+/// spaces in them are no join words.
+fn is_name(part: &str) -> bool {
+    part.split_whitespace()
+        .any(|word| word.chars().count() >= 2)
+}
+
 /// Drops YouTube's " - Topic" and "VEVO" channel suffixes from an artist name.
 fn clean_artist(artist: &str) -> String {
     let artist = artist.trim();
@@ -156,5 +192,47 @@ mod tests {
     #[test]
     fn dash_in_real_title_is_kept_when_artist_differs() {
         assert_eq!(search_terms("Part 1 - Intro", "Band").0, "Part 1 - Intro");
+    }
+
+    #[test]
+    fn a_single_artist_is_asked_once() {
+        assert_eq!(artist_forms("Lumen Coast"), ["Lumen Coast"]);
+        assert_eq!(artist_forms(""), [""]);
+        // A name spelled out letter by letter has no join word in it.
+        assert_eq!(artist_forms("v e i l"), ["v e i l"]);
+        assert_eq!(artist_forms("r a i n y d a y s"), ["r a i n y d a y s"]);
+    }
+
+    #[test]
+    fn a_collaboration_in_another_language_is_rewritten() {
+        assert_eq!(
+            artist_forms("Ariana Grande và The Weeknd"),
+            [
+                "Ariana Grande, The Weeknd",
+                "Ariana Grande và The Weeknd",
+                "Ariana Grande"
+            ]
+        );
+        assert_eq!(
+            artist_forms("Justice y Simian"),
+            ["Justice, Simian", "Justice y Simian", "Justice"]
+        );
+        // However the browser wrote it, the artists come out the same way.
+        for join in [" and ", " und ", " et ", " и ", " och "] {
+            let artist = format!("Queen{join}David Bowie");
+            assert_eq!(artist_forms(&artist)[0], "Queen, David Bowie", "{artist}");
+        }
+    }
+
+    #[test]
+    fn a_mash_up_stops_at_the_first_artists() {
+        assert_eq!(
+            artist_forms("Usher and Beyoncé and Lil Wayne"),
+            [
+                "Usher, Beyoncé, Lil Wayne",
+                "Usher and Beyoncé and Lil Wayne",
+                "Usher"
+            ]
+        );
     }
 }
