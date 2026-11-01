@@ -10,8 +10,7 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use chrono::{
-    Datelike, Days, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, TimeZone, Utc,
-    Weekday,
+    Datelike, Days, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, TimeZone, Utc, Weekday,
 };
 use futures_util::future::join_all;
 use log::debug;
@@ -53,7 +52,10 @@ pub struct Desktop {
 
 /// The desktop's events from the day `begin` is on through `end`'s. Empty when EDS says nothing.
 pub async fn events(bus: &Connection, begin: NaiveDate, end: NaiveDate) -> Vec<Desktop> {
-    if let Some(read) = CACHE.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+    if let Some(read) = CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
         && read.at.elapsed() < CACHE_FOR
         && read.begin <= begin
         && end <= read.end
@@ -427,7 +429,9 @@ impl Starts {
 fn starts(value: &str) -> Option<Starts> {
     let value = value.trim();
     if value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Some(Starts::Day(NaiveDate::parse_from_str(value, "%Y%m%d").ok()?));
+        return Some(Starts::Day(
+            NaiveDate::parse_from_str(value, "%Y%m%d").ok()?,
+        ));
     }
     let utc = value.ends_with('Z');
     let wall = NaiveDateTime::parse_from_str(value.trim_end_matches('Z'), "%Y%m%dT%H%M%S").ok()?;
@@ -509,7 +513,11 @@ fn weekday(text: &str) -> Option<Weekday> {
 /// such day (the 31st of a short month).
 fn add_months(day: NaiveDate, months: i32) -> Option<NaiveDate> {
     let months = day.year() * 12 + day.month0() as i32 + months;
-    NaiveDate::from_ymd_opt(months.div_euclid(12), months.rem_euclid(12) as u32 + 1, day.day())
+    NaiveDate::from_ymd_opt(
+        months.div_euclid(12),
+        months.rem_euclid(12) as u32 + 1,
+        day.day(),
+    )
 }
 
 /// An ics summary as plain words: its escapes (`\,`, `\;`, `\\`, `\n`) undone.
@@ -570,7 +578,10 @@ mod tests {
         ]);
         let found = text_events(&text, day("2026-09-07"), day("2026-09-21"));
         assert_eq!(
-            found.iter().map(|event| event.date.as_str()).collect::<Vec<_>>(),
+            found
+                .iter()
+                .map(|event| event.date.as_str())
+                .collect::<Vec<_>>(),
             ["2026-09-08", "2026-09-15"]
         );
     }
@@ -589,10 +600,7 @@ mod tests {
                 .iter()
                 .map(|event| (event.date.as_str(), event.start.as_deref()))
                 .collect::<Vec<_>>(),
-            [
-                ("2026-09-10", Some("13:00")),
-                ("2026-09-15", Some("09:00")),
-            ]
+            [("2026-09-10", Some("13:00")), ("2026-09-15", Some("09:00")),]
         );
     }
 
@@ -604,7 +612,10 @@ mod tests {
         ]);
         let found = text_events(&text, day("2026-08-24"), day("2026-09-30"));
         assert_eq!(
-            found.iter().map(|event| event.date.as_str()).collect::<Vec<_>>(),
+            found
+                .iter()
+                .map(|event| event.date.as_str())
+                .collect::<Vec<_>>(),
             ["2026-08-25", "2026-09-01", "2026-09-15"]
         );
     }

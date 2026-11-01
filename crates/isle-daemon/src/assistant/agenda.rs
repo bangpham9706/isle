@@ -213,12 +213,7 @@ fn list(text: &mut String, heading: &str, items: impl Iterator<Item = String>) {
 }
 
 /// The same, with its own cut: what the calendar uses.
-fn list_capped(
-    text: &mut String,
-    heading: &str,
-    most: usize,
-    items: impl Iterator<Item = String>,
-) {
+fn list_capped(text: &mut String, heading: &str, most: usize, items: impl Iterator<Item = String>) {
     let items: Vec<String> = items.collect();
     if items.is_empty() {
         let _ = writeln!(text, "{heading}: none");
@@ -351,10 +346,7 @@ mod tests {
     fn a_question_naming_a_day_lists_only_that_day() {
         let today = NaiveDate::from_ymd_opt(2026, 10, 21).unwrap();
         let focus = asked_range("What's on my calendar today?", today);
-        assert_eq!(
-            focus,
-            Some((today, today, format!("today, {today}")))
-        );
+        assert_eq!(focus, Some((today, today, format!("today, {today}"))));
         let events = [
             event(1, "2026-10-21", Some("20:00"), Some("22:00"), "Today"),
             event(2, "2026-10-22", Some("20:00"), Some("22:00"), "Tomorrow"),
